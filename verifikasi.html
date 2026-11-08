@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#1E6FEB">
+  <meta name="robots" content="noindex">
+  <meta name="description" content="Cek keaslian invoice & kuitansi YukX dengan memindai QR atau memasukkan kode verifikasi.">
+  <title>Verifikasi Dokumen — YukX</title>
+  <link rel="icon" id="favicon" href="assets/favicon.png">
+  <script>
+    (function () {
+      try {
+        var t = JSON.parse(localStorage.getItem('yukx:tema') || 'null'), r = document.documentElement;
+        var g = localStorage.getItem('yukx:gelap');                       // belum memilih → ikuti tema perangkat
+        if (g === null ? (!r.getAttribute('data-theme') && matchMedia('(prefers-color-scheme: dark)').matches) || r.getAttribute('data-theme') === 'dark' : JSON.parse(g)) r.setAttribute('data-theme', 'dark'); else r.setAttribute('data-theme', 'light');
+        if (t && t.vars) {
+          var gelap = r.getAttribute('data-theme') === 'dark';
+          Object.keys(t.vars).forEach(function (k) { if (gelap && /--c-(bg|surface|text|text-muted|primary-tint|primary-tint-2|ink|ink-2)$/.test(k)) return; r.style.setProperty(k, t.vars[k]); });
+          if (t.fav) document.getElementById('favicon').href = t.fav;
+        }
+      } catch (e) { }
+    })();
+  </script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap">
+  <link rel="stylesheet" href="css/style.css?v=1.0.0">
+  <style>
+    body { background: var(--c-bg); min-height: 100dvh; display: grid; place-items: center; padding: 24px 16px; }
+    .vf { width: min(100%, 520px); display: flex; flex-direction: column; gap: 16px; }
+    .vf__brand { display: flex; align-items: center; gap: 12px; justify-content: center; }
+    .vf__brand img { width: 44px; height: 44px; border-radius: 14px; }
+    .vf__brand b { font-family: var(--font-head); font-size: 20px; letter-spacing: -.02em; }
+    .vf__status { display: flex; flex-direction: column; align-items: center; text-align: center; gap: 10px; padding: 8px 0 4px; }
+    .vf__ring { width: 76px; height: 76px; border-radius: 50%; display: grid; place-items: center; }
+    .vf__ring svg { width: 40px; height: 40px; }
+    .vf__ring.ok { background: var(--c-ok-tint); color: var(--c-ok); }
+    .vf__ring.no { background: var(--c-danger-tint); color: var(--c-danger); }
+    .vf__ring.wait { background: var(--c-primary-tint); color: var(--c-primary); }
+    .vf__ring.wait svg { animation: spin 1s linear infinite; }
+    .vf dl { margin: 0; display: grid; grid-template-columns: auto 1fr; gap: 10px 16px; font-size: 14px; }
+    .vf dt { color: var(--c-text-muted); }
+    .vf dd { margin: 0; text-align: right; font-weight: 700; overflow-wrap: anywhere; }
+    .vf form { display: flex; gap: 8px; }
+    .vf form .input { flex: 1; text-transform: uppercase; letter-spacing: .08em; font-family: var(--font-mono, ui-monospace, monospace); }
+    @keyframes spin { to { transform: rotate(360deg); } }
+  </style>
+</head>
+<body>
+  <main class="vf enter">
+    <div class="vf__brand"><img id="vf-logo" src="assets/favicon.png" alt="" width="44" height="44"><b id="vf-nama">YukX</b></div>
+    <section class="card stack" style="gap:16px" aria-live="polite">
+      <div class="vf__status" id="vf-status">
+        <div class="vf__ring wait"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg></div>
+        <h1 style="font-size:20px;margin:0">Memeriksa dokumen…</h1>
+      </div>
+      <div id="vf-detail"></div>
+    </section>
+    <section class="card stack" style="gap:10px">
+      <b>Cek kode lain</b>
+      <form id="vf-form" autocomplete="off">
+        <input class="input" id="vf-kode" name="k" placeholder="Kode di bawah QR" maxlength="24" aria-label="Kode verifikasi">
+        <button class="btn btn--primary" type="submit">Cek</button>
+      </form>
+      <small class="muted">Kode tercetak di bawah QR pada invoice/kuitansi. Data pribadi pelanggan disamarkan.</small>
+    </section>
+    <small class="muted" style="text-align:center" id="vf-kaki">Halaman verifikasi resmi</small>
+  </main>
+  <script src="js/config.js?v=1.0.0"></script>
+  <script>
+    (function () {
+      'use strict';
+      var CFG = window.APP_CONFIG || {}, DEMO = !CFG.GAS_URL || /GANTI|XXXX/i.test(CFG.GAS_URL);
+      var IK = {
+        ok: '<path d="M21.801 10A10 10 0 1 1 17 3.335"/><path d="m9 11 3 3L22 4"/>',
+        no: '<circle cx="12" cy="12" r="10"/><path d="m15 9-6 6"/><path d="m9 9 6 6"/>',
+        warn: '<path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3"/><path d="M12 9v4"/><path d="M12 17h.01"/>'
+      };
+      function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
+      function svg(n) { return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + IK[n] + '</svg>'; }
+      var elS = document.getElementById('vf-status'), elD = document.getElementById('vf-detail');
+
+      function tampil(res) {
+        var d = res && res.data;
+        if (d && d.app) { document.getElementById('vf-nama').textContent = d.app; document.title = 'Verifikasi Dokumen — ' + d.app; }
+        if (d && d.logo) document.getElementById('vf-logo').src = d.logo;
+        if (d && d.pt) document.getElementById('vf-kaki').textContent = 'Halaman verifikasi resmi ' + d.pt;
+        if (!res || !res.success) {
+          elS.innerHTML = '<div class="vf__ring no">' + svg('no') + '</div><h1 style="font-size:20px;margin:0">Dokumen tidak terverifikasi</h1><p class="muted" style="margin:0">' + esc(res && res.message || 'Gagal memeriksa. Coba lagi.') + '</p>';
+          elD.innerHTML = ''; return;
+        }
+        var sah = d.sah;
+        elS.innerHTML = '<div class="vf__ring ' + (sah ? 'ok' : 'no') + '">' + svg(sah ? 'ok' : 'warn') + '</div><h1 style="font-size:20px;margin:0">' + (sah ? 'Dokumen ASLI & sah' : 'Dokumen sudah DIBATALKAN') + '</h1><span class="badge ' + (sah ? 'ok' : 'danger') + '">' + esc(d.jenis) + ' · ' + esc(d.status) + '</span>';
+        elD.innerHTML = '<dl><dt>No. invoice</dt><dd class="mono">' + esc(d.noInvoice) + '</dd><dt>Tanggal terbit</dt><dd>' + esc(d.tglTerbit) + '</dd><dt>Atas nama</dt><dd>' + esc(d.customer) + '</dd><dt>Trip</dt><dd>' + esc(d.trip) + '</dd><dt>Jadwal</dt><dd>' + esc(d.jadwal) + '</dd><dt>Nominal</dt><dd class="num" style="color:var(--c-primary);font-size:16px">' + esc(d.nominal) + '</dd></dl>' +
+          (sah ? '' : '<div class="note danger" style="margin-top:14px"><span>Dokumen ini tidak berlaku lagi. Hubungi admin untuk dokumen pengganti.</span></div>');
+      }
+      function muatScript(src) { return new Promise(function (ok, no) { var s = document.createElement('script'); s.src = src; s.onload = ok; s.onerror = no; document.head.appendChild(s); }); }
+
+      async function cek(kode) {
+        kode = String(kode || '').trim().toUpperCase();
+        if (!kode) { tampil({ success: false, message: 'Masukkan kode verifikasi atau pindai QR pada dokumen.' }); return; }
+        elS.innerHTML = '<div class="vf__ring wait"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg></div><h1 style="font-size:20px;margin:0">Memeriksa dokumen…</h1>'; elD.innerHTML = '';
+        try {
+          if (DEMO) {
+            if (!window.YX) await muatScript('js/engine.js?v=1.0.0');
+            var db = JSON.parse(localStorage.getItem('yukx:demo:db') || 'null');
+            if (!db || !db.D) { tampil({ success: false, message: 'Mode Demo: buka aplikasi di perangkat ini terlebih dahulu agar data contoh tersedia.' }); return; }
+            var r = YX.hitung.verifikasiPublik(db.D, kode), S = {};
+            (db.D.Pengaturan || []).forEach(function (x) { S[x.Kunci] = x.Nilai; });
+            if (r.data) { r.data.app = S.APP_NAMA || 'YukX'; r.data.pt = S.PT_NAMA; r.data.logo = S.LOGO_URL; }
+            await new Promise(function (ok) { setTimeout(ok, 400); });
+            tampil(r);
+          } else {
+            var ctrl = new AbortController(), t = setTimeout(function () { ctrl.abort(); }, 25000);
+            var res = await fetch(CFG.GAS_URL + '?action=verifikasi&k=' + encodeURIComponent(kode), { redirect: 'follow', cache: 'no-store', signal: ctrl.signal });
+            clearTimeout(t); tampil(await res.json());
+          }
+        } catch (e) { tampil({ success: false, message: 'Koneksi bermasalah. Periksa internet lalu coba lagi.' }); }
+      }
+      var q = new URLSearchParams(location.search).get('k') || '';
+      document.getElementById('vf-kode').value = q;
+      document.getElementById('vf-form').addEventListener('submit', function (e) { e.preventDefault(); var k = document.getElementById('vf-kode').value; history.replaceState(null, '', '?k=' + encodeURIComponent(k.trim().toUpperCase())); cek(k); });
+      cek(q);
+    })();
+  </script>
+</body>
+</html>

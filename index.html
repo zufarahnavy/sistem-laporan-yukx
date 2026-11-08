@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#1E6FEB">
+  <meta name="description" content="Otomatisasi Sistem Laporan YukX — customer, penjualan, invoice, Google Calendar, budget, manifest, rekap & laba rugi.">
+  <title>YukX — Report Automation</title>
+  <link rel="icon" id="favicon" href="assets/favicon.png">
+  <link rel="apple-touch-icon" href="assets/apple-touch-icon.png">
+  <!-- Tema terakhir diterapkan SEBELUM CSS lain → tidak ada kedip warna/font -->
+  <script>
+    (function () {
+      try {
+        var t = JSON.parse(localStorage.getItem('yukx:tema') || 'null'), r = document.documentElement;
+        var g = localStorage.getItem('yukx:gelap');                       // belum memilih → ikuti tema perangkat
+        if (g === null ? (!r.getAttribute('data-theme') && matchMedia('(prefers-color-scheme: dark)').matches) || r.getAttribute('data-theme') === 'dark' : JSON.parse(g)) r.setAttribute('data-theme', 'dark'); else r.setAttribute('data-theme', 'light');
+        if (t && t.vars) {
+          var gelap = r.getAttribute('data-theme') === 'dark';
+          Object.keys(t.vars).forEach(function (k) { if (gelap && /--c-(bg|surface|text|text-muted|primary-tint|primary-tint-2|ink|ink-2)$/.test(k)) return; r.style.setProperty(k, t.vars[k]); });
+          if (t.title) document.title = t.title;
+          if (t.fav) document.getElementById('favicon').href = t.fav;
+          (t.fonts || []).forEach(function (f) { if (f && f !== 'Plus Jakarta Sans') document.write('<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=' + f.replace(/\s/g, '+') + ':wght@400;500;600;700;800&display=swap">'); });
+        }
+      } catch (e) { }
+    })();
+  </script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="preconnect" href="https://script.google.com">
+  <link rel="preconnect" href="https://script.googleusercontent.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap">
+  <link rel="stylesheet" href="css/style.css?v=1.0.0">
+</head>
+<body>
+  <div id="loader" role="status" aria-live="polite">
+    <div class="loader__box">
+      <div class="loader__logo"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M2 22h20"/><path d="M6.36 17.4 4 17l-2-4 1.1-.55a2 2 0 0 1 1.8 0l.17.1a2 2 0 0 0 1.8 0L8 12 5 6l.9-.45a2 2 0 0 1 2.09.2l4.02 3a2 2 0 0 0 2.1.2l4.19-2.06a2.41 2.41 0 0 1 1.73-.17L21 7a1.4 1.4 0 0 1 .87 1.99l-.38.76c-.23.46-.6.84-1.07 1.08L7.58 17.2a2 2 0 0 1-1.22.18Z"/></svg></div>
+      <div class="loader__bar"><i></i></div>
+      <div class="loader__text">Menyiapkan dashboard…</div>
+    </div>
+  </div>
+  <div id="app" aria-busy="true"></div>
+  <div id="toasts" aria-live="polite"></div>
+
+  <script src="js/config.js?v=1.0.0" defer></script>
+  <script src="js/icons.js?v=1.0.0" defer></script>
+  <script src="js/engine.js?v=1.0.0" defer></script>
+  <script src="js/qr.js?v=1.0.0" defer></script>
+  <script src="js/core.js?v=1.0.0" defer></script>
+  <script src="js/demo.js?v=1.0.0" defer></script>
+  <script src="js/ui.js?v=1.0.0" defer></script>
+  <script src="js/charts.js?v=1.0.0" defer></script>
+  <script src="js/dokumen.js?v=1.0.0" defer></script>
+  <script src="js/pages/dashboard.js?v=1.0.0" defer></script>
+  <script src="js/pages/customer.js?v=1.0.0" defer></script>
+  <script src="js/pages/penjualan.js?v=1.0.0" defer></script>
+  <script src="js/pages/invoice.js?v=1.0.0" defer></script>
+  <script src="js/pages/budget.js?v=1.0.0" defer></script>
+  <script src="js/pages/manifest.js?v=1.0.0" defer></script>
+  <script src="js/pages/rekap.js?v=1.0.0" defer></script>
+  <script src="js/pages/labarugi.js?v=1.0.0" defer></script>
+  <script src="js/pages/wa.js?v=1.0.0" defer></script>
+  <script src="js/pages/pengaturan.js?v=1.0.0" defer></script>
+  <script src="js/pages/log.js?v=1.0.0" defer></script>
+  <script src="js/app.js?v=1.0.0" defer></script>
+</body>
+</html>
