@@ -1,4 +1,4 @@
-# Panduan Instalasi — Otomatisasi Sistem Laporan YukX v1.0.0
+# Panduan Instalasi — Otomatisasi Sistem Laporan YukX v1.1.0
 
 Aplikasi ini terdiri dari dua bagian yang dipasang terpisah:
 
@@ -7,16 +7,24 @@ Aplikasi ini terdiri dari dua bagian yang dipasang terpisah:
 | **Backend** | 6 berkas `.gs` + `appsscript.json` | Google Apps Script (akun Google pemilik data) | ± 15 menit |
 | **Frontend** | ZIP `yukx-laporan.zip` (folder ini) | GitHub Pages (gratis) | ± 20 menit |
 
-Data tersimpan di **Google Sheets**, dokumen PDF di **Google Drive**, jadwal trip di **Google Calendar**, email terkirim lewat **Gmail**, dan WhatsApp lewat **Fonnte**. Semua token dan kunci rahasia tersimpan di **Script Properties** — tidak ada di kode, Sheets, maupun di GitHub.
+Data tersimpan di **Google Sheets**, dokumen PDF di **Google Drive**, jadwal trip di **Google Calendar** (tampil juga di menu **Kalender Trip**), email terkirim lewat **Gmail**, dan WhatsApp lewat **Fonnte**. Semua token dan kunci rahasia tersimpan di **Script Properties** — tidak ada di kode, Sheets, maupun di GitHub.
+
+> **Sudah memakai v1.0.0?** Langsung ke **Bagian E — Update aplikasi**. Data Anda tidak berubah.
+
+### Yang baru di v1.1.0
+- **Alur RAB & realisasi anggaran baru** — Admin menyusun RAB dan mencatat realisasi; Finance menyetujui RAB dan mengaudit realisasi. Hanya realisasi yang sudah **Final** yang masuk Laporan Laba Rugi. Trip yang realisasinya melebihi RAB diberi tanda **Melebihi RAB** (dan **RUGI** bila labanya minus). Lihat **Bagian C2**.
+- **Menu Kalender Trip** — embed Google Calendar "YukX Trips" + kalender bulanan dengan daftar peserta dan statusnya. Lihat **Bagian C3**.
+- **Semua PDF dirapikan untuk kertas A4** — RAB, laporan realisasi, rekap, laba rugi, manifest, invoice, dan kuitansi. Lihat **Bagian C4**.
 
 ---
 
 ## 0. Coba dulu Mode Demo (tanpa memasang apa pun)
 
-Selama `js/config.js` belum diisi, aplikasi berjalan dalam **Mode Demo**: data contoh lengkap (8 trip bergambar, 40 customer, 33 penjualan, ±50 invoice, budget, manifest, CRM, riwayat WhatsApp) tersimpan di browser perangkat Anda.
+Selama `js/config.js` belum diisi, aplikasi berjalan dalam **Mode Demo**: data contoh lengkap (8 trip bergambar, 40 customer, 33 penjualan, ±50 invoice, RAB berversi, realisasi dengan berbagai status audit, manifest, CRM, riwayat WhatsApp) tersimpan di browser perangkat Anda.
 
 - Klik dua kali `index.html` (Chrome/Edge), atau buka situs GitHub Pages Anda sebelum `config.js` diisi.
 - Akun demo (PIN **123456**): **raka@yukx.id** (Admin, pengelola pengguna) · **sinta@yukx.id** (Finance).
+- Contoh status realisasi di data demo: Derawan & Bromo **Final**, Labuan Bajo **Diajukan** (melebihi RAB Rp 9,86 jt), Belitung **Perlu Perbaikan** — cocok untuk mencoba alur audit.
 - PDF, Calendar, WhatsApp, dan email **disimulasikan** di Mode Demo. Menu **Pengaturan → Integrasi & data → Reset data demo** mengembalikan data contoh.
 
 ---
@@ -64,13 +72,13 @@ Tekan **Ctrl+S** (Simpan). Urutan berkas tidak berpengaruh.
 Setup membuat secara otomatis:
 - Spreadsheet **"YukX — Database Laporan"** (23 sheet, kolom nomor HP & tanggal berformat teks agar angka 0 di depan tidak hilang).
 - Folder Drive **"YukX — Laporan & Dokumen"** berisi `Trip/`, `Aset Aplikasi/`, `Bukti Transfer/`, `Template Dokumen/`.
-- Kalender **"YukX Trips"**.
+- Kalender **"YukX Trips"** (privat), lalu **dibagikan hanya-baca** ke email semua akun tim yang aktif.
 - 4 template Google Docs: Invoice, Kuitansi, Manifest per Customer, Manifest per Trip.
 - Akun Admin pertama (pengelola pengguna) dengan PIN acak.
 - Trigger: pekerja tiap 1 menit, pengingat harian 07:00 WIB, dan pendeteksi edit spreadsheet.
 - Rahasia di Script Properties: `SESSION_SECRET`, `PIN_PEPPER`, `SPREADSHEET_ID`, `FOLDER_*`, `CALENDAR_ID`.
 
-Setup **aman dijalankan ulang** kapan saja (misalnya setelah update kode): tidak membuat admin, template, atau data ganda.
+Setup **aman dijalankan ulang** kapan saja (misalnya setelah update kode): tidak membuat admin, template, atau data ganda, dan hanya **menambah** kolom yang belum ada.
 
 ### A5. (Opsional) Isi data contoh di server
 Pilih fungsi **`isiDataDemo`** → **▶ Jalankan**. Data contoh dibuat **tanpa akun ber-PIN diketahui**. Customer contoh bertag `DEMO` dan **tidak pernah dikirimi** WhatsApp/email. Sebelum dipakai sungguhan, jalankan **`kosongkanDataDemo`** (hanya berjalan bila semua customer masih bertag DEMO).
@@ -79,7 +87,7 @@ Pilih fungsi **`isiDataDemo`** → **▶ Jalankan**. Data contoh dibuat **tanpa 
 1. Klik **Terapkan / Deploy** → **Deployment baru**.
 2. Klik ⚙️ di samping "Pilih jenis" → **Aplikasi web**.
 3. Isi:
-   - Deskripsi: `v1.0.0`
+   - Deskripsi: `v1.1.0`
    - **Jalankan sebagai: Saya** (akun Anda)
    - **Yang memiliki akses: Siapa saja**
 4. **Terapkan** → salin **URL aplikasi web** (berakhiran `/exec`).
@@ -152,18 +160,57 @@ Repo → **Settings** → **Pages** → Source: **Deploy from a branch** → Bra
    - URL halaman verifikasi QR: `https://USERNAME.github.io/yukx-laporan/verifikasi.html`
    - Lengkapi nama PT, alamat, rekening, penanda tangan → **Simpan perubahan**.
 4. **Pengaturan → Identitas & tampilan**: unggah logo & favicon, pilih palet warna dan font. Penyimpanan diblokir otomatis bila kontras warna di bawah standar WCAG (4,5:1).
-5. **Pengaturan → Pengguna & RBAC** → **Tambah pengguna** (maks. 5 akun aktif). PIN awal tampil sekali — berikan langsung ke orangnya.
+5. **Pengaturan → Pengguna & RBAC** → **Tambah pengguna** (maks. 5 akun aktif). PIN awal tampil sekali — berikan langsung ke orangnya. **Gunakan email akun Google** (Gmail atau Google Workspace) agar orang itu bisa melihat embed Google Calendar; kalender otomatis dibagikan hanya-baca ke email tersebut.
 6. **WhatsApp & CRM → Konfigurasi**:
    - Tempel **token Fonnte** → Simpan (tersimpan di Script Properties, tampil tersamar).
    - **Cek perangkat** → **Kirim tes WA** → **Kirim tes email**.
    - Nyalakan saklar WhatsApp & Email, atur matriks notifikasi per kejadian, ukuran batch blast (10/20/50) dan jeda.
 7. **Pengaturan → Template dokumen**: klik **Buka di Google Docs** untuk mengubah tampilan invoice/manifest, lalu **Pindai ulang**.
 
-### Cara kerja otomatisasi
+### C1. Cara kerja otomatisasi
 - **Terbitkan invoice** → nomor `YX/INV/2026/11/0001` (urut per tahun, dijamin unik) → PDF dari template Docs tersimpan di `Trip/<kode trip>/Invoice` → event Google Calendar dibuat/diperbarui (**satu event per penjualan, tidak pernah ganda**) dengan PDF terlampir → WhatsApp + email (PDF terlampir) ke customer.
 - **Manifest ditandai Final** → PDF + Excel manifest → dilampirkan ke event Calendar customer itu.
 - Proses berat berjalan di **antrean latar**: tombol langsung merespons, dokumen menyusul dalam hitungan detik. Bila aplikasi ditutup, trigger tiap menit melanjutkan.
 - QR di invoice menuju `verifikasi.html` — siapa pun bisa mengecek keaslian dokumen; nama customer disamarkan.
+
+### C2. Alur RAB & realisasi anggaran (siapa mengerjakan apa)
+
+| Tahap | Dikerjakan | Di menu | Hasil |
+|---|---|---|---|
+| 1. Susun & revisi RAB | **Admin** | Kalkulasi Budget → Item RAB | Draft, bisa diubah bebas |
+| 2. Ajukan RAB | **Admin** | tombol **Ajukan ke Finance** | Status *Menunggu* |
+| 3. Setujui / tolak RAB | **Finance** | Kalkulasi Budget | *Aktif* (terkunci) atau *Ditolak* (Admin merevisi lalu mengajukan lagi) |
+| 4. Ubah RAB yang sudah disetujui | **Admin** | **Ajukan perubahan RAB** + alasan (mis. *Kesalahan penulisan RAB*) | Versi baru menunggu persetujuan Finance; versi lama tetap berlaku sampai disetujui |
+| 5. Catat realisasi (nota + bukti) | **Admin** | Kalkulasi Budget → tab **Realisasi anggaran** → **Catat nota** | Sisa RAB per kategori tampil saat mengisi; peringatan bila melebihi |
+| 6. Laporkan ke Finance | **Admin** | **Laporkan ke Finance** (aktif setelah tanggal pulang trip) | Status *Diajukan*; nota terkunci. Bila melebihi RAB, penjelasan wajib diisi |
+| 7. Audit realisasi | **Finance** | Rekapitulasi → klik trip → **Audit laporan** | **Setujui (Final)**, **Minta perbaikan**, atau **Tolak** — bisa juga menolak nota tertentu beserta alasannya |
+| 8. Masuk laporan keuangan | otomatis | Laba Rugi, Dashboard | Angka **Final** dibekukan dan menjadi Laba Rugi resmi |
+
+Aturan penting:
+- **RAB terkunci** setelah disetujui. Saat realisasi sedang diaudit atau sudah Final, pengajuan perubahan RAB ditolak (RAB terkunci permanen setelah Final).
+- **Laba Rugi hanya menghitung trip Final.** Trip lain tetap tampil sebagai estimasi di bagian *Belum masuk laporan* dan tidak ikut dijumlahkan.
+- **Melebihi RAB**: bila realisasi > RAB yang disetujui, trip diberi tanda merah **Melebihi RAB +Rp … (…%)** di Rekap, Dashboard, Laba Rugi, dan PDF. Bila labanya minus, ditandai **RUGI**.
+- **Koreksi setelah Final**: hanya Finance yang bisa **Buka kembali untuk koreksi** (wajib catatan). Status kembali *Perlu Perbaikan* dan trip keluar dari Laba Rugi sampai disetujui lagi.
+- Setiap laporan, keputusan audit, dan pembukaan kembali tercatat di riwayat, dan pihak terkait mendapat notifikasi WA/email (bila saklar notifikasi tim aktif).
+
+### C3. Menu Kalender Trip
+- Tab **Google Calendar** menampilkan kalender "YukX Trips" langsung di aplikasi (tampilan bulan di komputer, agenda di HP). Setiap booking menjadi event berisi invoice & manifest.
+- Tab **Kalender bulanan** menampilkan jadwal trip dari data aplikasi, berwarna menurut status (Open / Berjalan / Selesai). Klik tanggal untuk melihat trip hari itu.
+- Kolom kanan: per trip — jumlah peserta/kuota, booking lunas, manifest final, event Calendar, status realisasi, dan tombol **Daftar peserta**: per pemesan — nama & WhatsApp, jumlah pax (dan kelengkapan data rombongan), status pembayaran beserta sisa tagihan, serta status manifest. Data lengkap per orang ada di menu Draft Manifest.
+- Embed hanya tampil untuk orang yang **masuk ke Google di browser yang sama** dengan email yang sudah diberi akses. Admin bisa menekan **Bagikan ke akun tim** untuk membagikan ulang ke semua akun aktif. Akun yang dinonaktifkan otomatis dicabut aksesnya.
+- Bila embed tidak tampil (mis. Safari memblokir cookie pihak ketiga), pakai tombol **Buka di Google Calendar**.
+
+### C4. Dokumen PDF (kertas A4)
+| Dokumen | Dari menu | Orientasi |
+|---|---|---|
+| RAB per versi (dikelompokkan per kategori, tanda tangan Admin & Finance) | Kalkulasi Budget → tombol PDF | Potret |
+| Laporan realisasi anggaran (RAB vs realisasi per kategori, rincian nota, status audit) | tab Realisasi / drawer Rekap → **Laporan PDF** | Potret |
+| Rekapitulasi operasional semua trip | Rekapitulasi → PDF | Lanskap |
+| Laporan laba rugi (hanya trip Final) | Laba Rugi → PDF | Potret |
+| Manifest per trip / per customer | Draft Manifest → pratinjau → **Unduh PDF (A4)** | Lanskap / potret |
+| Invoice & kuitansi | Invoice / Penjualan → pratinjau → **Cetak** | Potret |
+
+Semua PDF memiliki kop perusahaan, nomor halaman "Halaman x dari n", kepala tabel yang berulang di setiap halaman, dan watermark **DRAFT / DALAM AUDIT** untuk dokumen yang belum final. Saat memakai tombol **Cetak**, pilih kertas **A4**, margin **Default**, dan centang **Grafik latar belakang** agar warna tabel ikut tercetak.
 
 ---
 
@@ -183,18 +230,35 @@ Sheet & kolom dikenali dari namanya (contoh: "Data Pelanggan", "Nama Lengkap", "
 
 ## Bagian E — Update aplikasi
 
-**Backend** (kode `.gs` berubah):
-1. Tempel kode baru → Simpan → jalankan **`setupAppEnvironment`** sekali (menambah kolom/izin baru bila ada).
-2. **Terapkan → Kelola deployment → ✏️ Edit → Versi: Versi baru → Terapkan.** URL `/exec` tetap sama.
-   Jangan pilih "Deployment baru" — itu membuat URL baru.
+### E1. Update dari v1.0.0 ke v1.1.0
+Lakukan **backend dulu**, baru frontend.
 
-**Frontend** (berkas di folder `yukx-laporan` berubah), dari folder proyek:
+**Backend:**
+1. Di editor Apps Script, untuk **setiap** berkas (`Kode`, `Logika`, `Integrasi`, `Notifikasi`, `Setup`, `QrLib`, `appsscript.json`): klik berkasnya → **Ctrl+A** → tempel isi baru → **Ctrl+S**.
+2. Pilih fungsi **`setupAppEnvironment`** → **▶ Jalankan**. Di log akan terlihat antara lain:
+   ```
+   ✓ Realisasi_Biaya: kolom baru Catatan_Verifikasi, Diverifikasi_Oleh
+   ✓ Rekap_Operasional: kolom baru Tgl_Lapor, Dilapor_Oleh, Penjelasan_Lapor, Biaya_Final, Laba_Final, Tgl_Final
+   ```
+   Lalu kalender dibagikan ke akun tim. Kolom hanya **ditambah** — tidak ada data yang dihapus atau diubah.
+3. **Terapkan → Kelola deployment → ✏️ Edit → Versi: Versi baru → Terapkan.** URL `/exec` tetap sama.
+
+**Frontend** — salin isi ZIP baru ke folder proyek (timpa berkas lama, **jangan** timpa `js/config.js` Anda), lalu dari folder proyek:
 ```bash
 git add .
-git commit -m "Update tampilan"
+git commit -m "Update YukX v1.1.0"
 git push
 ```
 Tunggu 1–2 menit, lalu **Ctrl+Shift+R** di browser.
+
+**Data realisasi lama** otomatis dipetakan: *Terverifikasi* → **Final** (masuk Laba Rugi), *Menunggu Audit* → **Diajukan**, *Perlu Revisi / Perlu Audit Ulang* → **Perlu Perbaikan**. Realisasi lama yang dulu diisi Finance tetap utuh; mulai sekarang pencatatan dilakukan Admin.
+
+### E2. Update berikutnya (umum)
+**Backend** (kode `.gs` berubah):
+1. Tempel kode baru → Simpan → jalankan **`setupAppEnvironment`** sekali (menambah kolom/izin baru bila ada).
+2. **Terapkan → Kelola deployment → ✏️ Edit → Versi: Versi baru → Terapkan.** Jangan pilih "Deployment baru" — itu membuat URL baru.
+
+**Frontend** (berkas di folder `yukx-laporan` berubah), dari folder proyek: `git add .` → `git commit -m "Update"` → `git push`, lalu **Ctrl+Shift+R**.
 
 ---
 
@@ -209,7 +273,8 @@ Tunggu 1–2 menit, lalu **Ctrl+Shift+R** di browser.
 
 - PIN disimpan sebagai hash berulang + salt + pepper. 5× PIN salah → akun dikunci 15 menit.
 - Reset PIN, menonaktifkan akun, atau mengubah peran langsung mencabut sesi lama akun itu.
-- Hak akses Admin/Finance diperiksa di server untuk setiap aksi.
+- Hak akses Admin/Finance diperiksa di server untuk setiap aksi — termasuk pemisahan tugas: Admin tidak bisa menyetujui RAB atau mengaudit realisasinya sendiri, Finance tidak bisa mencatat realisasi.
+- **Pengecualian ID kalender:** agar embed di menu Kalender berfungsi, `CALENDAR_ID` dikirim ke browser **hanya untuk pengguna yang sudah login** (tidak pernah ke halaman publik seperti verifikasi QR). ID ini sendiri tidak memberi akses: kalender tetap **privat** dan hanya bisa dibaca akun tim yang dibagikan (hanya-baca). **Jangan** jadikan kalender "Tersedia untuk publik" di setelan Google Calendar.
 - Teks berawalan `=` (rumus) disimpan sebagai teks biasa di Sheets.
 - Fungsi editor darurat:
   - **`resetAksesDarurat`** — lupa PIN admin pengelola → PIN baru tampil di log.
@@ -220,10 +285,11 @@ Tunggu 1–2 menit, lalu **Ctrl+Shift+R** di browser.
 
 ## Bagian G — Performa & kuota
 
-- Saat masuk, data dimuat **sekali** lalu disimpan di perangkat. Pindah menu tidak memanggil server sama sekali; simpan data tampil seketika (optimistis) lalu disahkan server.
+- Saat masuk, data dimuat **sekali** lalu disimpan di perangkat. Pindah menu (termasuk Kalender) tidak memanggil server sama sekali; simpan data tampil seketika (optimistis) lalu disahkan server.
 - Server memakai cache berversi: edit langsung di spreadsheet terdeteksi trigger dan tampil di aplikasi dalam ±45 detik.
 - Trigger tiap menit langsung berhenti bila tidak ada pekerjaan (±5 menit runtime/hari). Akun Gmail biasa mendapat 90 menit/hari. Untuk mematikan: jalankan **`matikanPekerja`** (antrean tetap diproses saat aplikasi dibuka); nyalakan lagi dengan **`nyalakanPekerja`**.
 - Kuota email Google: ±100/hari (Gmail biasa), ±1.500/hari (Workspace). Sisa kuota tampil di menu WhatsApp & CRM.
+- PDF laporan dibuat langsung di browser (tanpa memakai kuota server).
 - **`cekPerforma`** di editor menampilkan status cache, antrean, trigger, dan waktu baca database. Di browser, ketik `Perf.table()` di Console (F12) untuk melihat waktu tiap panggilan.
 
 ---
@@ -237,6 +303,11 @@ Tunggu 1–2 menit, lalu **Ctrl+Shift+R** di browser.
 | Tampilan versi lama | Cache browser | Ctrl+Shift+R atau jendela Incognito |
 | PDF/Calendar belum muncul | Antrean masih berjalan | Tunggu ±1 menit; lihat tanda proses di halaman invoice; klik **Proses ulang** bila gagal |
 | "Calendar: …" gagal | Layanan Calendar API belum aktif | Pastikan `appsscript.json` sudah ditempel, jalankan `setupAppEnvironment` lagi |
+| Menu Kalender: "Anda tidak memiliki akses" / kosong | Browser belum masuk Google dengan email tim, atau kalender belum dibagikan | Masuk Google dengan email akun tim; Admin tekan **Bagikan ke akun tim**; di Safari pakai **Buka di Google Calendar** |
+| Tombol **Laporkan ke Finance** abu-abu | Trip belum selesai atau belum ada nota | Tombol aktif mulai tanggal pulang trip dan setelah minimal satu nota dicatat |
+| **Ajukan perubahan RAB** ditolak | Realisasi sedang diaudit / sudah Final | Tunggu keputusan Finance; bila sudah Final, minta Finance **Buka kembali untuk koreksi** |
+| Laba Rugi lebih kecil dari Rekap | Laba Rugi hanya menghitung trip **Final** | Lihat bagian *Belum masuk laporan*; selesaikan audit realisasinya |
+| Warna tabel hilang saat dicetak | Grafik latar belakang tidak dicentang | Di dialog cetak centang **Grafik latar belakang**, atau pakai **Unduh PDF (A4)** |
 | WhatsApp tidak terkirim | Token/perangkat Fonnte | Menu WhatsApp → Konfigurasi → Cek perangkat; customer bertag DEMO memang tidak dikirimi |
 | "Terlalu banyak percobaan PIN salah" | 5× PIN salah | Tunggu 15 menit, atau admin pengelola reset PIN |
 | Minta izin lagi setelah update | Ada izin baru | Jalankan `setupAppEnvironment` dan setujui |
@@ -246,8 +317,9 @@ Tunggu 1–2 menit, lalu **Ctrl+Shift+R** di browser.
 
 ## Hasil pengujian sebelum diserahkan
 
-- **Mesin logika** (dipakai server & Mode Demo): RBAC, nomor invoice unik, event tidak ganda, versi budget, kunci manifest, blast per batch, validasi kontras — lulus semua.
-- **Backend di simulator Apps Script**: 104 pemeriksaan lulus — setup idempoten, login & penguncian PIN, token palsu ditolak, idempotensi permintaan ulang, cache boot (0 baca Sheets saat hangat), PDF tanpa penanda tersisa, 1 event per penjualan walau diproses ulang, WA/email tidak pernah dikirim saat memegang kunci, impor dry-run & idempoten, rahasia tidak pernah muncul di respons.
-- **Browser (Chromium)**: 17 layar × 3 ukuran (360/768/1440 px) tanpa error JS dan tanpa geser horizontal; alur demo 29/29; kontrak frontend↔backend 14/14 (login 1 panggilan, 11× pindah menu = 0 panggilan server).
+- **Mesin logika** (dipakai server & Mode Demo): RBAC termasuk pemisahan tugas Admin/Finance, nomor invoice unik, event tidak ganda, versi & kunci RAB, alur realisasi (catat → lapor → audit → final → laba rugi, buka kembali, penolakan per nota, tanda melebihi RAB), kunci manifest, blast per batch, validasi kontras — lulus semua.
+- **Backend di simulator Apps Script**: 127 pemeriksaan lulus — setup idempoten, login & penguncian PIN, token palsu ditolak, idempotensi permintaan ulang, cache boot (0 baca Sheets saat hangat), PDF tanpa penanda tersisa, 1 event per penjualan walau diproses ulang, WA/email tidak pernah dikirim saat memegang kunci, impor dry-run & idempoten, rahasia tidak pernah muncul di respons, kalender dibagikan/dicabut otomatis sesuai status akun, ID kalender tidak pernah dikirim ke pengunjung tanpa login, alur RAB → realisasi → audit → Final lewat API dengan angka final tersimpan sebagai angka.
+- **Browser (Chromium)**: 19 layar × 3 ukuran (360/768/1440 px) tanpa error JS dan tanpa geser horizontal; alur demo 43/43 (termasuk audit Finance, perbaikan nota & lapor ulang Admin, menu Kalender); kontrak frontend↔backend 16/16 (login 1 panggilan, 12× pindah menu = 0 panggilan server, embed Google Calendar memakai kalender app).
+- **Dokumen PDF**: 10 dokumen dirender dan diperiksa visual — semuanya berukuran A4, tanpa teks terpotong atau kolom terlipat.
 
-Pengujian backend memakai simulator layanan Google; uji akhir di akun Anda tetap disarankan (Bagian C langkah 6 dan satu invoice percobaan).
+Pengujian backend memakai simulator layanan Google; uji akhir di akun Anda tetap disarankan (Bagian C langkah 6, satu invoice percobaan, dan buka menu Kalender dari akun Finance).

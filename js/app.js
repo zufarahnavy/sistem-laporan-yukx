@@ -15,6 +15,7 @@
     { id: 'invoice', label: 'Invoice', ikon: 'receipt' },
     { id: 'budget', label: 'Kalkulasi Budget', ikon: 'calculator' },
     { id: 'manifest', label: 'Draft Manifest', ikon: 'clipboard-list' },
+    { id: 'kalender', label: 'Kalender Trip', ikon: 'calendar-days' },
     { grup: 'Finance & Laporan' },
     { id: 'rekap', label: 'Rekapitulasi', ikon: 'chart-column' },
     { id: 'labarugi', label: 'Laba Rugi', ikon: 'trending-up' },
@@ -157,6 +158,8 @@
       n.budget = D.Budget_Header.filter(function (h) { return Store.isFin() ? h.Status === 'Menunggu' : h.Status === 'Ditolak'; }).length;
       n.penjualan = D.Pembayaran.filter(function (b) { return b.Status_Verifikasi === 'Menunggu'; }).length;
       n.wa = D.AntrianNotif.filter(function (r) { return r.Status === 'Gagal'; }).length;
+      var ix = HT.indeks(D), fin = Store.isFin();
+      n.rekap = D.Trip.filter(function (t) { if (t.Status === 'Batal') return false; var r = HT.rekapTrip(D, ix, t, today); return fin ? r.statusAudit === 'Diajukan' : r.perluLapor; }).length;
       return n;
     },
     renderNav: function () {

@@ -144,7 +144,8 @@
     var head = '<thead><tr>' + o.kolom.map(function (k) { return '<th class="' + (k.num ? 'num' : '') + (k.center ? ' center' : '') + '">' + esc(k.label) + '</th>'; }).join('') + '</tr></thead>';
     var body = '<tbody>' + o.baris.map(function (r, i) {
       if (r.__grup) return '<tr class="row-group"><td colspan="' + o.kolom.length + '" data-label="">' + r.__grup + '</td></tr>';
-      return '<tr' + (o.klik ? ' class="click" data-row="' + esc(o.klik(r)) + '" tabindex="0"' : '') + '>' + o.kolom.map(function (k, j) {
+      var kelas = [o.klik ? 'click' : '', o.kelasBaris ? o.kelasBaris(r) || '' : ''].join(' ').trim();
+      return '<tr' + (kelas ? ' class="' + kelas + '"' : '') + (o.klik ? ' data-row="' + esc(o.klik(r)) + '" tabindex="0"' : '') + '>' + o.kolom.map(function (k, j) {
         var v = k.render ? k.render(r, i) : esc(r[k.key]); return '<td class="' + (k.num ? 'num' : '') + (k.center ? ' center' : '') + (j === 0 && !o.tanpaMain ? ' main' : '') + (k.cls ? ' ' + k.cls : '') + '" data-label="' + esc(k.mlabel != null ? k.mlabel : k.label) + '">' + v + '</td>';
       }).join('') + '</tr>';
     }).join('') + '</tbody>';

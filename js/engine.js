@@ -1,6 +1,6 @@
 /**
  * ============================================================================
- *  YukX — LOGIKA.gs  ·  Mesin Logika Bisnis Bersama  ·  v1.0.0
+ *  YukX — LOGIKA.gs  ·  Mesin Logika Bisnis Bersama  ·  v1.1.0
  * ============================================================================
  *  Berkas ini dipakai di DUA tempat TANPA perubahan:
  *    1) Backend Google Apps Script  → Logika.gs
@@ -18,7 +18,7 @@
 var YX = (function () {
   'use strict';
 
-  var VERSI = '1.0.0';
+  var VERSI = '1.1.0';
   var TZ_MENIT = 420; // WIB (UTC+7)
 
   // ==========================================================================
@@ -36,10 +36,10 @@ var YX = (function () {
     Kategori_Biaya: { key: 'ID_Kategori', prefix: 'KAT', cols: ['ID_Kategori', 'Nama', 'Ikon', 'Urutan', 'Aktif'] },
     Budget_Header: { key: 'ID_Budget', prefix: 'BGT', cols: ['ID_Budget', 'ID_Trip', 'Versi', 'Status', 'Total', 'Alasan_Revisi', 'Catatan_Keputusan', 'Dibuat_Oleh', 'Tgl_Dibuat', 'Disetujui_Oleh', 'Tgl_Disetujui'] },
     Budget_Item: { key: 'ID_Item', prefix: 'BIT', cols: ['ID_Item', 'ID_Budget', 'Kategori', 'Uraian', 'Keterangan', 'Qty', 'Satuan', 'Harga_Satuan', 'Subtotal', 'Urutan'] },
-    Realisasi_Biaya: { key: 'ID_Realisasi', prefix: 'RLS', cols: ['ID_Realisasi', 'ID_Trip', 'Kategori', 'Uraian', 'Nominal', 'Tanggal', 'Link_Bukti', 'Status', 'Diinput_Oleh', 'Catatan', 'Dibuat'] },
+    Realisasi_Biaya: { key: 'ID_Realisasi', prefix: 'RLS', cols: ['ID_Realisasi', 'ID_Trip', 'Kategori', 'Uraian', 'Nominal', 'Tanggal', 'Link_Bukti', 'Status', 'Diinput_Oleh', 'Catatan', 'Dibuat', 'Catatan_Verifikasi', 'Diverifikasi_Oleh'] },
     Log_Revisi_Budget: { key: 'ID_Log', prefix: 'LRV', acak: true, cols: ['ID_Log', 'ID_Budget', 'ID_Trip', 'Siapa', 'Kapan', 'Item', 'Nilai_Lama', 'Nilai_Baru', 'Alasan'] },
     Manifest: { key: 'ID_Manifest', prefix: 'MNF', cols: ['ID_Manifest', 'Tipe', 'ID_Customer', 'ID_Penjualan', 'ID_Trip', 'Status', 'Versi', 'Link_File', 'File_ID', 'Link_Excel', 'ID_Lampiran_Calendar', 'Catatan', 'Tgl_Final', 'Dibuat_Oleh', 'Diperbarui'] },
-    Rekap_Operasional: { key: 'ID_Trip', prefix: '', cols: ['ID_Trip', 'Pax', 'Pendapatan', 'Kas_Masuk', 'Budget_Aktif', 'Versi_Budget', 'Realisasi', 'Selisih', 'Laba', 'Margin', 'Status_Audit', 'Diverifikasi_Oleh', 'Tgl_Verifikasi', 'Catatan_Audit', 'Diperbarui'] },
+    Rekap_Operasional: { key: 'ID_Trip', prefix: '', cols: ['ID_Trip', 'Pax', 'Pendapatan', 'Kas_Masuk', 'Budget_Aktif', 'Versi_Budget', 'Realisasi', 'Selisih', 'Laba', 'Margin', 'Status_Audit', 'Diverifikasi_Oleh', 'Tgl_Verifikasi', 'Catatan_Audit', 'Diperbarui', 'Tgl_Lapor', 'Dilapor_Oleh', 'Penjelasan_Lapor', 'Biaya_Final', 'Laba_Final', 'Tgl_Final'] },
     Pengaturan: { key: 'Kunci', prefix: '', cols: ['Kunci', 'Nilai', 'Keterangan'] },
     Log_Aktivitas: { key: 'ID_Log', prefix: 'LOG', acak: true, cols: ['ID_Log', 'Waktu', 'Pengguna', 'Peran', 'Aksi', 'Kategori', 'Objek', 'Detail'] },
     Antrean_Tugas: { key: 'ID_Tugas', prefix: 'TGS', acak: true, cols: ['ID_Tugas', 'Jenis', 'Ref', 'Payload', 'Status', 'Percobaan', 'Hasil', 'Dibuat', 'Selesai'] },
@@ -53,7 +53,7 @@ var YX = (function () {
   // Kolom angka (disimpan sebagai Number) — selain ini dianggap teks.
   var ANGKA = {};
   ['Kuota', 'Harga_Default', 'Jumlah_Pax', 'Harga_per_Pax', 'Diskon', 'Total', 'Terbayar', 'Sisa', 'Nominal', 'Versi', 'Qty', 'Harga_Satuan', 'Subtotal', 'Urutan',
-    'Pax', 'Pendapatan', 'Kas_Masuk', 'Budget_Aktif', 'Versi_Budget', 'Realisasi', 'Selisih', 'Laba', 'Margin', 'Percobaan', 'Terkirim', 'Gagal', 'UkuranBatch', 'JumlahPesan']
+    'Pax', 'Pendapatan', 'Kas_Masuk', 'Budget_Aktif', 'Versi_Budget', 'Realisasi', 'Selisih', 'Laba', 'Margin', 'Percobaan', 'Terkirim', 'Gagal', 'UkuranBatch', 'JumlahPesan', 'Biaya_Final', 'Laba_Final']
     .forEach(function (k) { ANGKA[k] = 1; });
   // Kolom yang harus tetap teks (nomor HP/identitas tidak boleh jadi angka)
   var TEKS_WAJIB = ['No_WA', 'Telp_Darurat', 'Identitas', 'No_HP', 'NoWA', 'Tujuan', 'JedaDetik'];
@@ -136,6 +136,10 @@ var YX = (function () {
       pesan: '📋 Budget *{trip}* versi {versi} ({total}) diajukan oleh {oleh} dan menunggu persetujuan Finance.\nAlasan: {alasan}' },
     TIM_BUDGET_DIPUTUSKAN: { label: 'Tim: keputusan budget', target: 'Admin', wa: true, email: false, subjek: 'Budget {trip} v{versi} {keputusan}',
       pesan: '📋 Budget *{trip}* versi {versi} *{keputusan}* oleh {oleh}.\n{catatan}' },
+    TIM_REALISASI_DIAJUKAN: { label: 'Tim: laporan realisasi perlu diaudit', target: 'Finance', wa: true, email: true, subjek: 'Realisasi {trip} menunggu audit',
+      pesan: '🧾 Laporan realisasi *{trip}* dilaporkan oleh {oleh}.\nRAB: {rab} · Realisasi: *{realisasi}*{lebih}\n{penjelasan}\nSilakan audit di menu Rekapitulasi.' },
+    TIM_REALISASI_DIPUTUSKAN: { label: 'Tim: hasil audit realisasi', target: 'Admin', wa: true, email: false, subjek: 'Realisasi {trip} {keputusan}',
+      pesan: '🧾 Laporan realisasi *{trip}* *{keputusan}* oleh {oleh}.\n{catatan}' },
     TIM_INVOICE_TERBIT: { label: 'Tim: invoice baru terbit', target: 'Finance', wa: false, email: false, subjek: 'Invoice {noInvoice} terbit',
       pesan: '🧾 Invoice {noInvoice} ({jenis}) {nominal} untuk {customer} — {trip} diterbitkan oleh {oleh}.' }
   };
@@ -379,28 +383,55 @@ var YX = (function () {
     };
   }
 
+  // Status laporan realisasi per trip (alur: Admin catat → lapor → Finance audit → Final)
+  var RLS = { BELUM: 'Belum Ada Realisasi', DRAFT: 'Draft', DIAJUKAN: 'Diajukan', PERBAIKAN: 'Perlu Perbaikan', DITOLAK: 'Ditolak', FINAL: 'Final' };
+  var RLS_EDIT = [RLS.BELUM, RLS.DRAFT, RLS.PERBAIKAN, RLS.DITOLAK];
+  function normRls(s) {
+    s = str(s); if (!s) return '';
+    if (s === 'Terverifikasi') return RLS.FINAL;
+    if (s === 'Menunggu Audit') return RLS.DIAJUKAN;
+    if (s === 'Perlu Revisi' || s === 'Perlu Audit Ulang') return RLS.PERBAIKAN;
+    return s;
+  }
+  /** RAB (versi aktif) vs realisasi per kategori — tanda kategori yang melebihi RAB. */
+  function rabVsRealisasi(ix, idTrip) {
+    var ba = budgetAktif(ix, idTrip), bud = {}, rls = {}, out = [];
+    if (ba) (ix.itemPerBgt[ba.ID_Budget] || []).forEach(function (i) { bud[i.Kategori] = (bud[i.Kategori] || 0) + num(i.Subtotal); });
+    (ix.rlsPerTrip[idTrip] || []).filter(function (r) { return r.Status !== 'Ditolak'; }).forEach(function (r) { rls[r.Kategori] = (rls[r.Kategori] || 0) + num(r.Nominal); });
+    Object.keys(Object.assign({}, bud, rls)).forEach(function (k) { var b = bud[k] || 0, r = rls[k] || 0; out.push({ kategori: k, rab: b, realisasi: r, selisih: b - r, over: r > b, persen: b ? Math.round(r / b * 100) : (r ? 999 : 0), diLuarRab: !b && r > 0 }); });
+    return out;
+  }
   function rekapTrip(D, ix, trip, today) {
     var pjs = (ix.pjPerTrip[trip.ID_Trip] || []).filter(function (p) { return p.Status !== 'Batal'; });
     var pendapatan = jumlah(pjs, function (p) { return p.Total; });
     var kas = jumlah(pjs, function (p) { return terbayarPj(ix, p.ID_Penjualan); });
     var pax = jumlah(pjs, function (p) { return p.Jumlah_Pax; });
-    var ba = budgetAktif(ix, trip.ID_Trip), bDraft = false;
+    var ba = budgetAktif(ix, trip.ID_Trip), bDraft = false, bAktif = !!ba;
     if (!ba) { ba = budgetTerbaru(ix, trip.ID_Trip); bDraft = !!ba; }   // belum ada versi aktif → pakai versi terbaru sebagai estimasi
     var bTot = ba ? num(ba.Total) : 0;
-    var rls = (ix.rlsPerTrip[trip.ID_Trip] || []).filter(function (r) { return r.Status !== 'Ditolak'; });
+    var semuaRls = ix.rlsPerTrip[trip.ID_Trip] || [], rls = semuaRls.filter(function (r) { return r.Status !== 'Ditolak'; });
     var realisasi = jumlah(rls, function (r) { return r.Nominal; });
-    var biaya = realisasi > 0 ? realisasi : bTot;
-    var laba = pendapatan - biaya;
     var rk = ix.rekap[trip.ID_Trip] || {};
+    var stA = normRls(rk.Status_Audit); if (!stA || stA === RLS.BELUM || stA === RLS.DRAFT) stA = realisasi > 0 ? RLS.DRAFT : RLS.BELUM;
+    var final = stA === RLS.FINAL, selesai = !!(trip.Tgl_Pulang && today >= trip.Tgl_Pulang);
+    var biaya = final ? (num(rk.Biaya_Final) || realisasi) : (realisasi > 0 ? realisasi : bTot);
+    var laba = pendapatan - biaya;
+    var over = bAktif && realisasi > bTot, lebih = over ? realisasi - bTot : 0;
+    var bisaEdit = RLS_EDIT.indexOf(stA) > -1 && bAktif;
     return {
       ID_Trip: trip.ID_Trip, trip: trip, status: statusTrip(trip, today), pax: pax, booking: pjs.length,
       pendapatan: pendapatan, kasMasuk: kas, piutang: pendapatan - kas,
-      budget: bTot, versiBudget: ba ? num(ba.Versi) : 0, budgetId: ba ? ba.ID_Budget : '', budgetStatus: ba ? ba.Status : '', budgetDraft: bDraft,
-      realisasi: realisasi, adaRealisasi: realisasi > 0, selisih: realisasi > 0 ? bTot - realisasi : 0,
+      budget: bTot, versiBudget: ba ? num(ba.Versi) : 0, budgetId: ba ? ba.ID_Budget : '', budgetStatus: ba ? ba.Status : '', budgetDraft: bDraft, budgetAktif: bAktif,
+      realisasi: realisasi, adaRealisasi: realisasi > 0, nota: semuaRls.length, notaDitolak: semuaRls.length - rls.length, selisih: realisasi > 0 ? bTot - realisasi : 0,
       selisihPersen: realisasi > 0 && bTot ? Math.round((bTot - realisasi) / bTot * 1000) / 10 : 0,
       biaya: biaya, laba: laba, margin: pendapatan ? Math.round(laba / pendapatan * 1000) / 10 : 0,
       estimasiLaba: pendapatan - bTot, estimasiMargin: pendapatan ? Math.round((pendapatan - bTot) / pendapatan * 1000) / 10 : 0,
-      statusAudit: rk.Status_Audit || (realisasi > 0 ? 'Menunggu Audit' : 'Belum Ada Realisasi'),
+      // alur realisasi & tanda risiko
+      statusAudit: stA, final: final, tripSelesai: selesai, bisaEdit: bisaEdit,
+      bisaLapor: bisaEdit && realisasi > 0 && selesai && stA !== RLS.BELUM,
+      perluLapor: bAktif && selesai && RLS_EDIT.indexOf(stA) > -1 && trip.Status !== 'Batal',
+      overBudget: over, lebih: lebih, lebihPersen: over && bTot ? Math.round(lebih / bTot * 1000) / 10 : 0, rugi: laba < 0 && (final || realisasi > 0),
+      tglLapor: rk.Tgl_Lapor || '', dilaporOleh: rk.Dilapor_Oleh || '', penjelasan: rk.Penjelasan_Lapor || '', tglFinal: rk.Tgl_Final || '',
       diverifikasiOleh: rk.Diverifikasi_Oleh || '', tglVerifikasi: rk.Tgl_Verifikasi || '', catatanAudit: rk.Catatan_Audit || ''
     };
   }
@@ -414,7 +445,8 @@ var YX = (function () {
     return o;
   }
 
-  /** Laporan laba rugi per periode. opsi: {dari, sampai, idTrip, kelompok:'bulan'|'trip'} */
+  /** Laporan laba rugi per periode. Hanya trip yang realisasinya sudah FINAL (disetujui Finance) masuk laporan.
+   *  opsi: {dari, sampai, idTrip, today, semua:true → semua trip ikut (rekap operasional / grafik estimasi)} */
   function labaRugi(D, opsi) {
     opsi = opsi || {}; var today = opsi.today || hariIni();
     var ix = indeks(D);
@@ -425,16 +457,20 @@ var YX = (function () {
       if (opsi.sampai && t.Tgl_Berangkat > opsi.sampai) return false;
       return true;
     });
-    var baris = urutkan(trips, function (t) { return t.Tgl_Berangkat; }).map(function (t) {
+    var semua = urutkan(trips, function (t) { return t.Tgl_Berangkat; }).map(function (t) {
       var r = rekapTrip(D, ix, t, today); r.kategori = biayaPerKategori(D, ix, t.ID_Trip); r.bulan = t.Tgl_Berangkat.slice(0, 7); return r;
     });
+    var baris = opsi.semua ? semua : semua.filter(function (r) { return r.final; }), tertunda = semua.filter(function (r) { return !r.final; });
     var kat = {}; baris.forEach(function (b) { Object.keys(b.kategori).forEach(function (k) { kat[k] = (kat[k] || 0) + b.kategori[k]; }); });
     var perBulan = {};
     baris.forEach(function (b) { var m = perBulan[b.bulan] = perBulan[b.bulan] || { bulan: b.bulan, pendapatan: 0, biaya: 0, laba: 0, trip: 0, pax: 0 }; m.pendapatan += b.pendapatan; m.biaya += b.biaya; m.laba += b.laba; m.trip++; m.pax += b.pax; });
     var totP = jumlah(baris, function (b) { return b.pendapatan; }), totB = jumlah(baris, function (b) { return b.biaya; });
+    var tP = jumlah(tertunda, function (b) { return b.pendapatan; }), tB = jumlah(tertunda, function (b) { return b.biaya; });
     return {
-      baris: baris, kategori: kat, perBulan: urutkan(Object.keys(perBulan).map(function (k) { return perBulan[k]; }), function (m) { return m.bulan; }),
-      total: { pendapatan: totP, biaya: totB, laba: totP - totB, margin: totP ? Math.round((totP - totB) / totP * 1000) / 10 : 0, kas: jumlah(baris, function (b) { return b.kasMasuk; }), pax: jumlah(baris, function (b) { return b.pax; }), trip: baris.length }
+      baris: baris, tertunda: tertunda, kategori: kat, perBulan: urutkan(Object.keys(perBulan).map(function (k) { return perBulan[k]; }), function (m) { return m.bulan; }),
+      total: { pendapatan: totP, biaya: totB, laba: totP - totB, margin: totP ? Math.round((totP - totB) / totP * 1000) / 10 : 0, kas: jumlah(baris, function (b) { return b.kasMasuk; }), pax: jumlah(baris, function (b) { return b.pax; }), trip: baris.length,
+        over: baris.filter(function (b) { return b.overBudget; }).length, lebih: jumlah(baris, function (b) { return b.lebih; }), rugi: baris.filter(function (b) { return b.laba < 0; }).length },
+      totalTertunda: { trip: tertunda.length, pendapatan: tP, biaya: tB, laba: tP - tB, menungguAudit: tertunda.filter(function (b) { return b.statusAudit === RLS.DIAJUKAN; }).length }
     };
   }
 
@@ -455,7 +491,8 @@ var YX = (function () {
     var ix = indeks(D), per = rentangPeriode(opsi.periode || 'bulan', today);
     var pjAktif = D.Penjualan.filter(function (p) { return p.Status !== 'Batal' && (!opsi.idTrip || p.ID_Trip === opsi.idTrip); });
     var ringkas = pjAktif.map(function (p) { return ringkasPj(D, ix, p, today, S); });
-    var lr = labaRugi(D, { dari: per.dari, sampai: per.sampai, idTrip: opsi.idTrip, today: today });
+    var lr = labaRugi(D, { dari: per.dari, sampai: per.sampai, idTrip: opsi.idTrip, today: today, semua: true });
+    var lrF = labaRugi(D, { dari: per.dari, sampai: per.sampai, idTrip: opsi.idTrip, today: today });
     var tripAktif = D.Trip.filter(function (t) { var s = statusTrip(t, today); return s === 'Open' || s === 'Berjalan'; });
     var invBelum = D.Invoice.filter(function (i) { return i.Status === 'Terbit'; });
     var sisaPiutang = jumlah(ringkas, function (r) { return r.sisa; });
@@ -487,8 +524,17 @@ var YX = (function () {
       if (r.hari >= 0 && r.hari <= 7 && (!r.manifest || r.manifest.Status !== 'Final')) antre.push({ jenis: 'manifest', prioritas: 2, r: r, label: 'Manifest belum final (H-' + r.hari + ')', aksi: 'Buka manifest' });
     });
     var bgtMenunggu = D.Budget_Header.filter(function (h) { return h.Status === 'Menunggu'; });
+    // Antrean realisasi anggaran: Admin melapor setelah trip selesai, Finance mengaudit
+    var rkSemua = D.Trip.filter(function (t) { return t.Status !== 'Batal' && (!opsi.idTrip || t.ID_Trip === opsi.idTrip); }).map(function (t) { return rekapTrip(D, ix, t, today); });
+    var realisasiAntre = [];
+    rkSemua.forEach(function (r) {
+      if (r.statusAudit === RLS.DIAJUKAN) realisasiAntre.push({ jenis: 'audit', peran: 'Finance', prioritas: r.overBudget ? 1 : 2, r: r, label: 'Audit laporan realisasi' + (r.overBudget ? ' · melebihi RAB ' + rpRingkas(r.lebih) : '') });
+      else if (r.perluLapor) realisasiAntre.push({ jenis: 'lapor', peran: 'Admin', prioritas: r.statusAudit === RLS.PERBAIKAN || r.statusAudit === RLS.DITOLAK ? 1 : 2, r: r, label: r.statusAudit === RLS.PERBAIKAN ? 'Realisasi perlu diperbaiki (catatan Finance)' : r.statusAudit === RLS.DITOLAK ? 'Laporan realisasi ditolak — susun ulang' : r.adaRealisasi ? 'Laporkan realisasi ke Finance' : 'Trip selesai — catat realisasi anggaran' });
+    });
     return {
-      periode: per, laba: lr.total.laba, margin: lr.total.margin, pendapatan: lr.total.pendapatan, biaya: lr.total.biaya, lr: lr,
+      periode: per, laba: lrF.total.laba, margin: lrF.total.margin, pendapatan: lr.total.pendapatan, biaya: lr.total.biaya, lr: lr, lrFinal: lrF,
+      labaEstimasi: lr.total.laba, marginEstimasi: lr.total.margin, tripFinal: lrF.total.trip, tripBelumFinal: lrF.totalTertunda.trip,
+      realisasiAntre: urutkan(realisasiAntre, function (a) { return a.prioritas; }), tripOver: rkSemua.filter(function (r) { return r.overBudget; }),
       tripAktif: tripAktif.length, paxAktif: jumlah(pjAktif.filter(function (p) { var t = ix.trip[p.ID_Trip]; return t && statusTrip(t, today) !== 'Selesai'; }), function (p) { return p.Jumlah_Pax; }),
       berangkatMingguIni: tripAktif.filter(function (t) { var h = selisihHari(today, t.Tgl_Berangkat); return h >= 0 && h <= 7; }).length,
       invBelum: invBelum.length, invBelumNominal: jumlah(invBelum, function (i) { return i.Nominal; }),
@@ -592,12 +638,8 @@ var YX = (function () {
     var ix = indeks(tx.D), r = rekapTrip(tx.D, ix, t, tx.today());
     var row = { ID_Trip: idTrip, Pax: r.pax, Pendapatan: r.pendapatan, Kas_Masuk: r.kasMasuk, Budget_Aktif: r.budget, Versi_Budget: r.versiBudget, Realisasi: r.realisasi, Selisih: r.selisih, Laba: r.laba, Margin: r.margin, Diperbarui: tx.now() };
     var cur = tx.get('Rekap_Operasional', idTrip);
-    if (cur) {
-      // Realisasi berubah setelah diverifikasi → perlu audit ulang
-      if (cur.Status_Audit === 'Terverifikasi' && num(cur.Realisasi) !== r.realisasi) { row.Status_Audit = 'Perlu Audit Ulang'; }
-      return tx.update('Rekap_Operasional', idTrip, row);
-    }
-    row.Status_Audit = r.realisasi > 0 ? 'Menunggu Audit' : 'Belum Ada Realisasi';
+    row.Status_Audit = r.statusAudit;                       // Belum/Draft mengikuti ada-tidaknya nota; status lain hanya diubah lewat alur lapor/audit
+    if (cur) return tx.update('Rekap_Operasional', idTrip, row);
     return tx.insert('Rekap_Operasional', row);
   }
 
@@ -893,7 +935,10 @@ var YX = (function () {
     if (terbuka) throw salah('Versi ' + terbuka.Versi + ' masih ' + terbuka.Status + '. Selesaikan atau hapus dulu.');
     var aktif = null; hs.forEach(function (h) { if (h.Status === 'Aktif') aktif = h; });
     if (!aktif) throw salah('Belum ada versi aktif untuk direvisi.');
-    if (!str(d.alasan)) throw salah('Alasan revisi wajib diisi.');
+    if (!str(d.alasan)) throw salah('Alasan pengajuan perubahan RAB wajib diisi.');
+    var stR = normRls((tx.get('Rekap_Operasional', t.ID_Trip) || {}).Status_Audit);
+    if (stR === RLS.DIAJUKAN) throw salah('Laporan realisasi trip ini sedang diaudit Finance — RAB tidak bisa diubah dulu.');
+    if (stR === RLS.FINAL) throw salah('Realisasi trip ini sudah final disetujui Finance — RAB terkunci permanen.');
     var mx = 0; hs.forEach(function (h) { mx = Math.max(mx, num(h.Versi)); });
     var h = tx.insert('Budget_Header', { ID_Trip: t.ID_Trip, Versi: mx + 1, Status: 'Draft', Total: aktif.Total, Alasan_Revisi: str(d.alasan), Dibuat_Oleh: tx.user.nama, Tgl_Dibuat: tx.now() });
     // Salin item dari versi aktif → admin cukup mengubah item yang berubah
@@ -901,7 +946,7 @@ var YX = (function () {
       tx.insert('Budget_Item', { ID_Budget: h.ID_Budget, Kategori: i.Kategori, Uraian: i.Uraian, Keterangan: i.Keterangan, Qty: i.Qty, Satuan: i.Satuan, Harga_Satuan: i.Harga_Satuan, Subtotal: i.Subtotal, Urutan: i.Urutan });
     });
     tx.log('Buat revisi budget v' + (mx + 1), 'Budgeting & RAB', t.Kode, str(d.alasan));
-    return ok(tx.get('Budget_Header', h.ID_Budget), 'Revisi v' + (mx + 1) + ' dibuat dari versi aktif v' + aktif.Versi + '. Ubah item yang berubah saja.');
+    return ok(tx.get('Budget_Header', h.ID_Budget), 'Draft perubahan RAB v' + (mx + 1) + ' dibuat dari versi aktif v' + aktif.Versi + '. Perbaiki item, lalu ajukan ke Finance — v' + aktif.Versi + ' tetap berlaku sampai disetujui.');
   };
   A['budget.simpanItem'] = function (tx, d) {
     var h = tx.get('Budget_Header', d.ID_Budget); if (!h) throw salah('Budget tidak ditemukan.');
@@ -984,31 +1029,92 @@ var YX = (function () {
     tx.remove('Kategori_Biaya', d.id); tx.log('Hapus kategori biaya', 'Sistem', d.id, k.Nama); return ok({ id: d.id }, 'Kategori dihapus.');
   };
 
-  // ---------- Realisasi & audit (Finance) ----------
+  // ---------- Realisasi anggaran: Admin mencatat & melapor → Finance mengaudit → Final masuk laba rugi ----------
+  function konteksRls(tx, idTrip) {
+    var t = tx.get('Trip', idTrip); if (!t) throw salah('Trip tidak ditemukan.');
+    var ix = indeks(tx.D), r = rekapTrip(tx.D, ix, t, tx.today());
+    return { t: t, ix: ix, r: r };
+  }
+  function catatRiwayatRls(tx, k, item, lama, baru, alasan) {
+    tx.insert('Log_Revisi_Budget', { ID_Budget: k.r.budgetId, ID_Trip: k.t.ID_Trip, Siapa: tx.user.nama, Kapan: tx.now(), Item: 'REALISASI — ' + item, Nilai_Lama: lama, Nilai_Baru: baru, Alasan: str(alasan) });
+  }
+  function pastikanBisaEdit(k) {
+    if (!k.r.budgetAktif) throw salah('RAB trip ini belum disetujui Finance. Realisasi dicatat setelah RAB aktif.');
+    if (!k.r.bisaEdit) throw salah('Laporan realisasi berstatus "' + k.r.statusAudit + '" sehingga terkunci.' + (k.r.statusAudit === RLS.FINAL ? ' Minta Finance membuka kembali bila ada koreksi.' : ' Tunggu hasil audit Finance.'));
+  }
   A['realisasi.simpan'] = function (tx, d) {
-    var t = tx.get('Trip', d.ID_Trip); if (!t) throw salah('Trip tidak ditemukan.');
+    var k = konteksRls(tx, d.ID_Trip); pastikanBisaEdit(k);
     var nominal = bulat(d.Nominal); if (nominal <= 0) throw salah('Nominal realisasi harus lebih dari 0.');
     if (!str(d.Uraian)) throw salah('Uraian wajib diisi.');
-    var row = { ID_Trip: t.ID_Trip, Kategori: str(d.Kategori) || 'Lain-lain', Uraian: str(d.Uraian), Nominal: nominal, Tanggal: tgl(d.Tanggal) || tx.today(), Link_Bukti: str(d.Link_Bukti), Status: 'Tercatat', Diinput_Oleh: tx.user.nama, Catatan: str(d.Catatan) };
-    var r = d.ID_Realisasi && tx.get('Realisasi_Biaya', d.ID_Realisasi) ? tx.update('Realisasi_Biaya', d.ID_Realisasi, row) : tx.insert('Realisasi_Biaya', Object.assign(row, { Dibuat: tx.now() }));
-    recalcRekap(tx, t.ID_Trip);
-    tx.log('Input realisasi biaya', 'Budgeting & RAB', t.Kode, row.Kategori + ' · ' + rp(nominal));
-    return ok(r, 'Realisasi tercatat. Rekap dihitung ulang.');
+    var row = { ID_Trip: k.t.ID_Trip, Kategori: str(d.Kategori) || 'Lain-lain', Uraian: str(d.Uraian), Nominal: nominal, Tanggal: tgl(d.Tanggal) || tx.today(), Link_Bukti: str(d.Link_Bukti), Status: 'Tercatat', Diinput_Oleh: tx.user.nama, Catatan: str(d.Catatan), Catatan_Verifikasi: '', Diverifikasi_Oleh: '' };
+    var lama = d.ID_Realisasi ? tx.get('Realisasi_Biaya', d.ID_Realisasi) : null;
+    if (lama && lama.ID_Trip !== k.t.ID_Trip) throw salah('Nota bukan milik trip ini.');
+    if (lama && !row.Link_Bukti) row.Link_Bukti = lama.Link_Bukti;
+    var r = lama ? tx.update('Realisasi_Biaya', lama.ID_Realisasi, row) : tx.insert('Realisasi_Biaya', Object.assign(row, { Dibuat: tx.now() }));
+    var rk = recalcRekap(tx, k.t.ID_Trip), k2 = konteksRls(tx, k.t.ID_Trip);
+    tx.log(lama ? 'Ubah nota realisasi' : 'Catat nota realisasi', 'Budgeting & RAB', k.t.Kode, row.Kategori + ' · ' + rp(nominal));
+    return ok(r, 'Nota realisasi tersimpan. Total realisasi ' + rp(k2.r.realisasi) + (k2.r.overBudget ? ' — MELEBIHI RAB ' + rp(k2.r.lebih) + '.' : ' dari RAB ' + rp(k2.r.budget) + '.'));
   };
   A['realisasi.hapus'] = function (tx, d) {
-    var r = tx.get('Realisasi_Biaya', d.id); if (!r) throw salah('Data tidak ditemukan.');
-    tx.remove('Realisasi_Biaya', d.id); recalcRekap(tx, r.ID_Trip); tx.log('Hapus realisasi', 'Budgeting & RAB', r.ID_Trip, r.Uraian + ' ' + rp(r.Nominal));
-    return ok({ id: d.id }, 'Realisasi dihapus.');
+    var x = tx.get('Realisasi_Biaya', d.id); if (!x) throw salah('Data tidak ditemukan.');
+    var k = konteksRls(tx, x.ID_Trip); pastikanBisaEdit(k);
+    tx.remove('Realisasi_Biaya', d.id); recalcRekap(tx, x.ID_Trip); tx.log('Hapus nota realisasi', 'Budgeting & RAB', k.t.Kode, x.Uraian + ' ' + rp(x.Nominal));
+    return ok({ id: d.id }, 'Nota realisasi dihapus.');
   };
-  A['rekap.audit'] = function (tx, d) {
-    var t = tx.get('Trip', d.ID_Trip); if (!t) throw salah('Trip tidak ditemukan.');
-    var st = ['Terverifikasi', 'Perlu Revisi', 'Menunggu Audit'].indexOf(d.status) > -1 ? d.status : 'Terverifikasi';
-    recalcRekap(tx, t.ID_Trip);
-    var rk = tx.get('Rekap_Operasional', t.ID_Trip);
-    if (st === 'Terverifikasi' && num(rk.Realisasi) <= 0) throw salah('Belum ada realisasi biaya untuk diaudit.');
-    tx.update('Rekap_Operasional', t.ID_Trip, { Status_Audit: st, Diverifikasi_Oleh: tx.user.nama, Tgl_Verifikasi: tx.now(), Catatan_Audit: str(d.catatan) });
-    tx.log('Audit rekap: ' + st, 'Budgeting & RAB', t.Kode, str(d.catatan));
-    return ok(tx.get('Rekap_Operasional', t.ID_Trip), 'Status audit: ' + st + '.');
+  /** Admin melaporkan realisasi ke Finance (setelah trip selesai). Melebihi RAB → penjelasan wajib. */
+  A['realisasi.lapor'] = function (tx, d) {
+    var k = konteksRls(tx, d.ID_Trip), r = k.r; pastikanBisaEdit(k);
+    if (!r.adaRealisasi) throw salah('Belum ada nota realisasi untuk dilaporkan.');
+    if (!r.tripSelesai) throw salah('Realisasi dilaporkan setelah trip selesai (' + tglId(k.t.Tgl_Pulang) + ').');
+    if (r.overBudget && str(d.penjelasan).length < 10) throw salah('Realisasi melebihi RAB ' + rp(r.lebih) + '. Tulis penjelasan kelebihan biaya (min. 10 karakter).');
+    var lamaSt = r.statusAudit;
+    recalcRekap(tx, k.t.ID_Trip);
+    tx.update('Rekap_Operasional', k.t.ID_Trip, { Status_Audit: RLS.DIAJUKAN, Tgl_Lapor: tx.now(), Dilapor_Oleh: tx.user.nama, Penjelasan_Lapor: str(d.penjelasan) });
+    catatRiwayatRls(tx, k, lamaSt === RLS.DRAFT ? 'Dilaporkan ke Finance' : 'Dilaporkan ulang ke Finance', 'RAB v' + r.versiBudget + ' ' + rp(r.budget), 'Realisasi ' + rp(r.realisasi) + (r.overBudget ? ' · MELEBIHI RAB ' + rp(r.lebih) + ' (' + r.lebihPersen + '%)' : ' · hemat ' + rp(r.budget - r.realisasi)), d.penjelasan);
+    penerimaTim(tx, 'Finance').forEach(function (p) { notif(tx, 'TIM_REALISASI_DIAJUKAN', p, varsDasar(tx, { trip: k.t.Nama, oleh: tx.user.nama, rab: rp(r.budget), realisasi: rp(r.realisasi), lebih: r.overBudget ? ' ⚠️ melebihi RAB ' + rp(r.lebih) : '', penjelasan: str(d.penjelasan) ? 'Penjelasan: ' + str(d.penjelasan) : '' }), k.t.ID_Trip); });
+    tx.log('Lapor realisasi ke Finance', 'Budgeting & RAB', k.t.Kode, rp(r.realisasi) + (r.overBudget ? ' · melebihi RAB ' + rp(r.lebih) : ''));
+    return ok(tx.get('Rekap_Operasional', k.t.ID_Trip), 'Laporan realisasi dikirim ke Finance untuk diaudit.');
+  };
+  /** Finance memutuskan: setujui (Final → masuk laba rugi) · perbaikan (kembali ke Admin) · tolak. Nota tertentu bisa ditolak. */
+  A['realisasi.verifikasi'] = function (tx, d) {
+    var k = konteksRls(tx, d.ID_Trip), r = k.r, kep = ['setujui', 'perbaikan', 'tolak'].indexOf(d.keputusan) > -1 ? d.keputusan : '';
+    if (!kep) throw salah('Pilih keputusan audit.');
+    if (r.statusAudit !== RLS.DIAJUKAN) throw salah('Hanya laporan berstatus Diajukan yang bisa diaudit (sekarang: ' + r.statusAudit + ').');
+    if (kep !== 'setujui' && str(d.catatan).length < 5) throw salah('Tulis catatan untuk Admin (apa yang harus diperbaiki).');
+    var tolakItem = d.item || {}, nTolak = 0;
+    Object.keys(tolakItem).forEach(function (id) {
+      var x = tx.get('Realisasi_Biaya', id); if (!x || x.ID_Trip !== k.t.ID_Trip) return;
+      tx.update('Realisasi_Biaya', id, { Status: 'Ditolak', Catatan_Verifikasi: str(tolakItem[id]) || 'Ditolak saat audit', Diverifikasi_Oleh: tx.user.nama }); nTolak++;
+    });
+    var aktifItem = tx.where('Realisasi_Biaya', function (x) { return x.ID_Trip === k.t.ID_Trip && x.Status !== 'Ditolak'; });
+    var status = kep === 'setujui' ? RLS.FINAL : kep === 'perbaikan' ? RLS.PERBAIKAN : RLS.DITOLAK, patch = { Diverifikasi_Oleh: tx.user.nama, Tgl_Verifikasi: tx.now(), Catatan_Audit: str(d.catatan) };
+    if (kep === 'setujui') {
+      if (!aktifItem.length) throw salah('Semua nota ditolak — gunakan "Minta perbaikan".');
+      aktifItem.forEach(function (x) { tx.update('Realisasi_Biaya', x.ID_Realisasi, { Status: 'Disetujui', Diverifikasi_Oleh: tx.user.nama }); });
+    }
+    recalcRekap(tx, k.t.ID_Trip);
+    var k2 = konteksRls(tx, k.t.ID_Trip), r2 = k2.r;
+    patch.Status_Audit = status;
+    if (status === RLS.FINAL) { patch.Biaya_Final = r2.realisasi; patch.Laba_Final = r2.pendapatan - r2.realisasi; patch.Tgl_Final = tx.now(); }
+    tx.update('Rekap_Operasional', k.t.ID_Trip, patch);
+    var label = { setujui: 'DISETUJUI (final)', perbaikan: 'PERLU PERBAIKAN', tolak: 'DITOLAK' }[kep];
+    catatRiwayatRls(tx, k, 'Audit Finance: ' + label, 'Realisasi dilaporkan ' + rp(r.realisasi), 'Diakui ' + rp(r2.realisasi) + (nTolak ? ' · ' + nTolak + ' nota ditolak' : '') + (status === RLS.FINAL ? ' · laba final ' + rp(r2.pendapatan - r2.realisasi) : ''), d.catatan);
+    var pelapor = tx.where('Pengguna', function (u) { return u.Nama === (r.dilaporOleh || ''); })[0];
+    (pelapor ? [{ nama: pelapor.Nama, hp: pelapor.No_WA, email: pelapor.Email }] : penerimaTim(tx, 'Admin')).forEach(function (p) { notif(tx, 'TIM_REALISASI_DIPUTUSKAN', p, varsDasar(tx, { trip: k.t.Nama, keputusan: label, oleh: tx.user.nama, catatan: str(d.catatan) }), k.t.ID_Trip); });
+    tx.log('Audit realisasi: ' + label, 'Budgeting & RAB', k.t.Kode, rp(r2.realisasi) + (nTolak ? ' · ' + nTolak + ' nota ditolak' : '') + (str(d.catatan) ? ' · ' + str(d.catatan) : ''));
+    return ok(tx.get('Rekap_Operasional', k.t.ID_Trip), status === RLS.FINAL ? 'Realisasi disetujui & final. Angka masuk laporan laba rugi.' : 'Laporan dikembalikan ke Admin (' + status + ').');
+  };
+  /** Finance membuka kembali laporan final untuk koreksi (keluar dari laba rugi sampai disetujui lagi). */
+  A['realisasi.bukaKembali'] = function (tx, d) {
+    var k = konteksRls(tx, d.ID_Trip);
+    if (k.r.statusAudit !== RLS.FINAL) throw salah('Hanya laporan final yang bisa dibuka kembali.');
+    if (str(d.catatan).length < 5) throw salah('Tulis alasan koreksi.');
+    tx.update('Rekap_Operasional', k.t.ID_Trip, { Status_Audit: RLS.PERBAIKAN, Catatan_Audit: str(d.catatan), Diverifikasi_Oleh: tx.user.nama, Tgl_Verifikasi: tx.now() });
+    catatRiwayatRls(tx, k, 'Dibuka kembali untuk koreksi', 'Final ' + rp(k.r.biaya), 'Perlu perbaikan', d.catatan);
+    var pelapor = tx.where('Pengguna', function (u) { return u.Nama === (k.r.dilaporOleh || ''); })[0];
+    (pelapor ? [{ nama: pelapor.Nama, hp: pelapor.No_WA, email: pelapor.Email }] : penerimaTim(tx, 'Admin')).forEach(function (p) { notif(tx, 'TIM_REALISASI_DIPUTUSKAN', p, varsDasar(tx, { trip: k.t.Nama, keputusan: 'DIBUKA KEMBALI untuk koreksi', oleh: tx.user.nama, catatan: str(d.catatan) }), k.t.ID_Trip); });
+    tx.log('Buka kembali realisasi', 'Budgeting & RAB', k.t.Kode, str(d.catatan));
+    return ok(tx.get('Rekap_Operasional', k.t.ID_Trip), 'Laporan dibuka kembali — keluar dari laba rugi sampai disetujui lagi.');
   };
   A['rekap.hitungUlang'] = function (tx) { var n = 0; tx.all('Trip').forEach(function (t) { recalcRekap(tx, t.ID_Trip); n++; }); return ok({ n: n }, n + ' trip dihitung ulang.'); };
   A['laporan.catat'] = function (tx, d) { tx.log('Unduh laporan ' + str(d.jenis), 'Finansial & Invoice', str(d.periode), str(d.format)); return ok(null, ''); };
@@ -1419,7 +1525,7 @@ var YX = (function () {
     'budget.buat': { roles: ADM }, 'budget.revisi': { roles: ADM }, 'budget.simpanItem': { roles: ADM }, 'budget.ajukan': { roles: ADM }, 'budget.hapusDraft': { roles: ADM },
     'budget.setujui': { roles: FIN }, 'budget.tolak': { roles: FIN },
     'kategori.simpan': { roles: ADM }, 'kategori.hapus': { roles: ADM },
-    'realisasi.simpan': { roles: FIN }, 'realisasi.hapus': { roles: FIN }, 'rekap.audit': { roles: FIN }, 'rekap.hitungUlang': { roles: SEMUA }, 'laporan.catat': { roles: SEMUA },
+    'realisasi.simpan': { roles: ADM }, 'realisasi.hapus': { roles: ADM }, 'realisasi.lapor': { roles: ADM }, 'realisasi.verifikasi': { roles: FIN }, 'realisasi.bukaKembali': { roles: FIN }, 'rekap.hitungUlang': { roles: SEMUA }, 'laporan.catat': { roles: SEMUA },
     'manifest.final': { roles: ADM }, 'manifest.revisi': { roles: ADM }, 'manifest.buat': { roles: ADM }, 'manifest.trip': { roles: ADM },
     'pengaturan.simpan': { roles: ADM }, 'pengaturan.default': { roles: ADM },
     'pengguna.simpan': { roles: ADM, pengelola: true }, 'pengguna.resetPin': { roles: ADM, pengelola: true },
@@ -1626,18 +1732,39 @@ var YX = (function () {
       });
     });
 
-    // Realisasi untuk trip selesai (BLT belum lengkap → menunggu nota akhir)
-    var FAKTOR = { DRW: [0.98, 1.0, 0.97, 1.02, 1.0, 0.96, 1.0], BRM: [0.95, 1.0, 1.0, 1.0, 1.0, 0.92, 0.97, 1.0, 1.0], LBJ: [1.0, 0.9, 0.97, 1.0, 1.0, 1.04, 0.95, 0.6, 0.5], BLT: [1.0, 1.0, 1.08, 1.0, 1.0] };
+    // Realisasi anggaran trip selesai — dicatat Admin, dilaporkan, diaudit Finance:
+    //   DRW & BRM final (masuk laba rugi) · LBJ diajukan & MELEBIHI RAB · BLT dikembalikan untuk perbaikan
+    var FAKTOR = { DRW: [0.98, 1.0, 0.97, 1.02, 1.0, 0.96, 1.0], BRM: [0.95, 1.0, 1.0, 1.0, 1.0, 0.92, 0.97, 1.0, 1.0], LBJ: [1.07, 1.0, 1.0, 1.02, 1.0, 1.04, 1.0, 1.0, 1.0], BLT: [1.0, 1.0, 1.08, 1.0, 1.0] };
+    var TAMBAHAN = { LBJ: [['Biaya Tak Terduga', 'Speedboat evakuasi — cuaca buruk hari ke-3', 6500000, 'Gelombang tinggi, rute Padar dialihkan']], BRM: [['Konsumsi', 'Makan malam tambahan rombongan', 1450000, '']] };
+    var PELAPOR = { DRW: STAF.maya, BRM: STAF.raka, LBJ: STAF.maya, BLT: STAF.dimas };
     Object.keys(FAKTOR).forEach(function (k) {
-      var t = trip[k], f = FAKTOR[k];
-      RAB[k].slice(0, f.length).forEach(function (it, ii) {
-        var nominal = Math.round(it[3] * it[5] * f[ii] / 1000) * 1000;
-        tx.insert('Realisasi_Biaya', { ID_Trip: t.ID_Trip, Kategori: it[0], Uraian: it[1], Nominal: nominal, Tanggal: tambahHari(t.Tgl_Pulang, ii % 3), Link_Bukti: '', Status: 'Tercatat', Diinput_Oleh: ii % 2 ? STAF.rian : STAF.sinta, Catatan: f[ii] < 1 ? 'Hemat dari negosiasi' : f[ii] > 1 ? 'Kenaikan harga BBM' : '', Dibuat: tambahHari(t.Tgl_Pulang, 1 + ii % 3) + 'T15:0' + ii + ':00' });
+      var t = trip[k], f = FAKTOR[k], rows = [];
+      RAB[k].slice(0, f.length).forEach(function (it, ii) { rows.push([it[0], it[1], Math.round(it[3] * it[5] * f[ii] / 1000) * 1000, f[ii] < 1 ? 'Hemat dari negosiasi' : f[ii] > 1 ? 'Kenaikan harga BBM / kurs' : '']); });
+      (TAMBAHAN[k] || []).forEach(function (x) { rows.push(x); });
+      rows.forEach(function (x, ii) {
+        tx.insert('Realisasi_Biaya', { ID_Trip: t.ID_Trip, Kategori: x[0], Uraian: x[1], Nominal: x[2], Tanggal: tambahHari(t.Tgl_Pulang, -(ii % 3)), Link_Bukti: 'demo:nota-' + (ii + 1) + '.jpg', Status: 'Tercatat', Diinput_Oleh: PELAPOR[k], Catatan: x[3], Dibuat: tambahHari(t.Tgl_Pulang, ii % 2) + 'T15:0' + (ii % 10) + ':00', Catatan_Verifikasi: '', Diverifikasi_Oleh: '' });
       });
     });
     Object.keys(trip).forEach(function (k) { recalcRekap(tx, trip[k].ID_Trip); });
-    ['DRW', 'BRM', 'LBJ'].forEach(function (k, i) { tx.update('Rekap_Operasional', trip[k].ID_Trip, { Status_Audit: 'Terverifikasi', Diverifikasi_Oleh: i % 2 ? STAF.rian : STAF.sinta, Tgl_Verifikasi: tambahHari(trip[k].Tgl_Pulang, 4) + 'T16:00:00' }); });
-    tx.update('Rekap_Operasional', trip.BLT.ID_Trip, { Status_Audit: 'Menunggu Audit', Catatan_Audit: 'Menunggu nota akhir mobil & kontingensi' });
+    function auditDemo(k, kep, oleh, catatan, tolak) {
+      var t = trip[k], ix0 = indeks(tx.D), r0 = rekapTrip(tx.D, ix0, t, today), tLapor = tambahHari(t.Tgl_Pulang, 2) + 'T09:30:00', tAudit = tambahHari(t.Tgl_Pulang, 4) + 'T16:10:00';
+      var jelas = r0.overBudget ? 'Cuaca buruk hari ke-3: rute dialihkan dengan speedboat evakuasi & harga BBM kapal naik. Bukti nota terlampir.' : '';
+      tx.update('Rekap_Operasional', t.ID_Trip, { Status_Audit: RLS.DIAJUKAN, Tgl_Lapor: tLapor, Dilapor_Oleh: PELAPOR[k], Penjelasan_Lapor: jelas });
+      tx.insert('Log_Revisi_Budget', { ID_Budget: r0.budgetId, ID_Trip: t.ID_Trip, Siapa: PELAPOR[k], Kapan: tLapor, Item: 'REALISASI — Dilaporkan ke Finance', Nilai_Lama: 'RAB v' + r0.versiBudget + ' ' + rp(r0.budget), Nilai_Baru: 'Realisasi ' + rp(r0.realisasi) + (r0.overBudget ? ' · MELEBIHI RAB ' + rp(r0.lebih) + ' (' + r0.lebihPersen + '%)' : ' · hemat ' + rp(r0.budget - r0.realisasi)), Alasan: jelas });
+      if (!kep) return;
+      (tolak || []).forEach(function (x) { var it = tx.where('Realisasi_Biaya', function (n) { return n.ID_Trip === t.ID_Trip && n.Uraian === x[0]; })[0]; if (it) tx.update('Realisasi_Biaya', it.ID_Realisasi, { Status: 'Ditolak', Catatan_Verifikasi: x[1], Diverifikasi_Oleh: oleh }); });
+      if (kep === 'setujui') tx.where('Realisasi_Biaya', function (n) { return n.ID_Trip === t.ID_Trip && n.Status !== 'Ditolak'; }).forEach(function (n) { tx.update('Realisasi_Biaya', n.ID_Realisasi, { Status: 'Disetujui', Diverifikasi_Oleh: oleh }); });
+      recalcRekap(tx, t.ID_Trip);
+      var r1 = rekapTrip(tx.D, indeks(tx.D), t, today), st1 = kep === 'setujui' ? RLS.FINAL : RLS.PERBAIKAN;
+      var patch = { Status_Audit: st1, Diverifikasi_Oleh: oleh, Tgl_Verifikasi: tAudit, Catatan_Audit: catatan };
+      if (st1 === RLS.FINAL) { patch.Biaya_Final = r1.realisasi; patch.Laba_Final = r1.pendapatan - r1.realisasi; patch.Tgl_Final = tAudit; }
+      tx.update('Rekap_Operasional', t.ID_Trip, patch);
+      tx.insert('Log_Revisi_Budget', { ID_Budget: r0.budgetId, ID_Trip: t.ID_Trip, Siapa: oleh, Kapan: tAudit, Item: 'REALISASI — Audit Finance: ' + (st1 === RLS.FINAL ? 'DISETUJUI (final)' : 'PERLU PERBAIKAN'), Nilai_Lama: 'Realisasi dilaporkan ' + rp(r0.realisasi), Nilai_Baru: 'Diakui ' + rp(r1.realisasi) + ((tolak || []).length ? ' · ' + tolak.length + ' nota ditolak' : '') + (st1 === RLS.FINAL ? ' · laba final ' + rp(r1.pendapatan - r1.realisasi) : ''), Alasan: catatan });
+    }
+    auditDemo('DRW', 'setujui', STAF.sinta, 'Nota lengkap & sesuai RAB.');
+    auditDemo('BRM', 'setujui', STAF.rian, 'Disetujui. 1 nota makan tambahan ditolak karena tanpa stempel vendor.', [['Makan malam tambahan rombongan', 'Nota tanpa stempel/kop vendor — tidak bisa diakui']]);
+    auditDemo('LBJ', '');
+    auditDemo('BLT', 'perbaikan', STAF.sinta, 'Nota sewa mobil Innova belum dilampirkan. Mohon unggah bukti lalu laporkan ulang.', [['Mobil Innova 3 hari', 'Bukti nota belum ada']]);
 
     // Manifest
     pjRows.forEach(function (x, i) {
@@ -1690,7 +1817,7 @@ var YX = (function () {
     klaimTugas: klaimTugas, selesaikanTugas: selesaikanTugas, tugasTertunda: tugasTertunda, klaimNotif: klaimNotif, selesaikanNotif: selesaikanNotif, adaAntrian: adaAntrian, pengingatHarian: pengingatHarian,
     matriksNotif: matriksNotif, recalcRekap: recalcRekap, recalcPenjualan: recalcPenjualan,
     bantu: { pastikanPeserta: pastikanPeserta, pastikanManifest: pastikanManifest, pastikanAnggotaUtama: pastikanAnggotaUtama, nomorInvoiceBaru: nomorInvoiceBaru, kodeVerif: kodeVerif, crmUpsertSatu: crmUpsertSatu },
-    hitung: { indeks: indeks, ringkasPj: ringkasPj, rekapTrip: rekapTrip, rekapSemua: rekapSemua, labaRugi: labaRugi, dashboard: dashboard, statusTrip: statusTrip, budgetAktif: budgetAktif, budgetTerbaru: budgetTerbaru, terbayarPj: terbayarPj, biayaPerKategori: biayaPerKategori, rentangPeriode: rentangPeriode, deskripsiEvent: deskripsiEvent, dataInvoice: dataInvoice, dataManifest: dataManifest, verifikasiPublik: verifikasiPublik, prosesInvoice: prosesInvoice },
+    RLS: RLS, hitung: { indeks: indeks, ringkasPj: ringkasPj, rekapTrip: rekapTrip, rabVsRealisasi: rabVsRealisasi, normRls: normRls, rekapSemua: rekapSemua, labaRugi: labaRugi, dashboard: dashboard, statusTrip: statusTrip, budgetAktif: budgetAktif, budgetTerbaru: budgetTerbaru, terbayarPj: terbayarPj, biayaPerKategori: biayaPerKategori, rentangPeriode: rentangPeriode, deskripsiEvent: deskripsiEvent, dataInvoice: dataInvoice, dataManifest: dataManifest, verifikasiPublik: verifikasiPublik, prosesInvoice: prosesInvoice },
     util: { str: str, num: num, pad: pad, tgl: tgl, tambahHari: tambahHari, selisihHari: selisihHari, tglId: tglId, tglPanjang: tglPanjang, rentangTgl: rentangTgl, rp: rp, rpRingkas: rpRingkas, terbilang: terbilang, hp08: hp08, hp62: hp62, hpValid: hpValid, emailValid: emailValid, isiTemplate: isiTemplate, inisial: inisial, samarkanNama: samarkanNama, urutkan: urutkan, jumlah: jumlah, kelompok: kelompok, peta: peta, nowIso: nowIso, hariIni: hariIni, kontras: kontras, cekPalet: cekPalet, paletAktif: paletAktif, parseJson: parseJson, BULAN: BULAN, BLN: BLN, ROMAWI: ROMAWI }
   };
 })();

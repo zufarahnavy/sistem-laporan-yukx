@@ -34,7 +34,7 @@
       el.innerHTML = '<div id="mf-head"></div><div id="mf-body"></div>';
       Hal.aksiPeta(el, {
         edit: function (d) { editor(d.pj); },
-        lihat: function (d) { var p = Store.get('Penjualan', d.pj); Dok.pratinjau('Manifest — ' + (Store.get('Customer', p.ID_Customer) || {}).Nama, Dok.manifestHTML({ idPenjualan: d.pj, idTrip: p.ID_Trip })); },
+        lihat: function (d) { var p = Store.get('Penjualan', d.pj); Dok.pratinjau('Manifest — ' + (Store.get('Customer', p.ID_Customer) || {}).Nama, Dok.manifestHTML({ idPenjualan: d.pj, idTrip: p.ID_Trip }), { pdf: function () { return Dok.pdfManifest({ idPenjualan: d.pj, idTrip: p.ID_Trip }); } }); },
         final: async function (d, b) {
           var m = Store.get('Manifest', d.m), p = Store.get('Penjualan', m.ID_Penjualan), ang = Store.D.Anggota_Rombongan.filter(function (a) { return a.ID_Penjualan === p.ID_Penjualan && a.Nama; }).length, paksa = false;
           if (ang < p.Jumlah_Pax) { paksa = await UI.konfirmasi({ judul: 'Data rombongan belum lengkap', teks: 'Baru ' + ang + ' dari ' + p.Jumlah_Pax + ' nama terisi. Tetap tandai Final?', ok: 'Tetap final', ikon: 'triangle-alert' }); if (!paksa) return; }
@@ -43,7 +43,7 @@
         revisi: async function (d, b) { if (await UI.konfirmasi({ judul: 'Buka revisi manifest?', teks: 'Status kembali Draft dengan versi baru. Saat final lagi, lampiran lama di Google Calendar diganti otomatis.', ok: 'Buka revisi', ikon: 'git-compare' })) C.aksi('manifest.revisi', { ID_Manifest: d.m }, { btn: b }); },
         buat: function (d, b) { C.aksi('manifest.buat', { ID_Penjualan: d.pj }, { btn: b }); },
         gabung: function (d, b) { C.aksi('manifest.trip', { ID_Trip: st.trip }, { btn: b, loadingText: 'Membuat…' }); },
-        pdfTrip: function () { Dok.pratinjau('Manifest trip', Dok.manifestHTML({ idTrip: st.trip })); },
+        pdfTrip: function () { Dok.pratinjau('Manifest trip', Dok.manifestHTML({ idTrip: st.trip }), { pdf: function () { return Dok.pdfManifest({ idTrip: st.trip }).then(function () { C.aksi('laporan.catat', { jenis: 'manifest', periode: (Store.get('Trip', st.trip) || {}).Kode, format: 'pdf' }, { diam: true }); }); } }); },
         xlsTrip: function () {
           var d = HT.dataManifest(Store.D, { idTrip: st.trip }, Store.S), t = Store.get('Trip', st.trip);
           Dok.excel('Manifest ' + t.Kode, [{ nama: 'Manifest', rows: [['No', 'Nama', 'Booking', 'Identitas', 'L/P', 'Tgl Lahir', 'No HP', 'Kamar', 'Ukuran Baju', 'Catatan']].concat(d.rows.map(function (r) { return [r.NO, r.NAMA, r.BOOKING, r.IDENTITAS, r.GENDER, r.TGL_LAHIR, r.HP, r.KAMAR, r.BAJU, r.CATATAN]; })), lebar: [5, 28, 24, 20, 5, 14, 16, 16, 8, 30] }]).then(function () { C.aksi('laporan.catat', { jenis: 'manifest', periode: t.Kode, format: 'xlsx' }, { diam: true }); }).catch(function (e) { UI.toast(e.message, 'err'); });
