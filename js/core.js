@@ -1,6 +1,6 @@
 /* =====================================================================
-   YukX — core.js : util, store (SWR), API (fetch ke GAS), optimistic UI,
-   pekerja antrean (PDF/Calendar/notifikasi), router SPA, tema.
+   YukBanyuwangi — core.js : util, store (SWR), API (fetch ke GAS), optimistic UI,
+   sinkron spreadsheet klien (delta tiap beberapa detik), pekerja antrean, tema.
    ===================================================================== */
 (function () {
   'use strict';
@@ -68,16 +68,17 @@
 
   // ---------------------------------------------------------------- store
   var Store = {
-    D: null, S: {}, me: null, ver: '', info: {}, token: '', busy: 0,
-    kunciCache: function () { return 'yukx:cache:' + (DEMO ? 'demo' : (this.me ? this.me.email : 'anon')); },
+    D: null, S: {}, me: null, ver: '', src: '', info: {}, token: '', busy: 0,
+    kunciCache: function () { return 'yb:cache:' + (DEMO ? 'demo' : (this.me ? this.me.email : 'anon')); },
     setBoot: function (b) {
-      this.D = b.D; this.S = b.S || {}; this.ver = b.ver || ''; this.info = b.info || {};
+      this.D = b.D; this.S = b.S || {}; this.ver = b.ver || ''; this.src = b.src || this.src || ''; this.info = b.info || {};
+      YX.TABEL_VIRTUAL.concat(YX.TABEL_APP).forEach(function (t) { if (!b.D[t]) b.D[t] = []; });
       if (b.me) this.me = b.me;
       this.simpanCache();
     },
     simpanCache: debounce(function () {
-      if (DEMO) { LS.set('yukx:demo:db', { D: Store.D, t: Date.now(), v: YX.VERSI }); return; }
-      LS.set(Store.kunciCache(), { D: Store.D, S: Store.S, ver: Store.ver, info: Store.info, me: Store.me, t: Date.now() });
+      if (DEMO) { LS.set('yb:demo:db', { D: Store.D, t: Date.now(), v: YX.VERSI }); return; }
+      LS.set(Store.kunciCache(), { D: Store.D, S: Store.S, ver: Store.ver, src: Store.src, info: Store.info, me: Store.me, t: Date.now() });
     }, 400),
     terapkan: function (res) {
       var D = this.D; if (!D || !res) return;
@@ -90,11 +91,26 @@
       Object.keys(rm).forEach(function (t) { var key = YX.SKEMA[t].key; D[t] = (D[t] || []).filter(function (r) { return rm[t].indexOf(r[key]) < 0; }); });
       if (ch.Pengaturan) { var S = this.S; ch.Pengaturan.forEach(function (r) { S[r.Kunci] = r.Nilai; }); Tema.terapkan(S); }
       if (res.ver) this.ver = res.ver;
+      if (res.src) this.src = res.src;
       this.simpanCache();
+    },
+    /** Delta dari spreadsheet klien (sumber.tarik). */
+    terapkanSumber: function (d) {
+      var D = this.D; if (!D || !d) return 0;
+      var idx = {}; D.Pesanan.forEach(function (r, i) { idx[r.ID_Pesanan] = i; });
+      (d.Pesanan || []).forEach(function (row) { if (idx[row.ID_Pesanan] !== undefined) D.Pesanan[idx[row.ID_Pesanan]] = row; else D.Pesanan.push(row); });
+      if (d.penuh) { var ada = {}; (d.Pesanan || []).forEach(function (r) { ada[r.ID_Pesanan] = 1; }); D.Pesanan = D.Pesanan.filter(function (r) { return ada[r.ID_Pesanan]; }); }
+      if ((d.hapus || []).length) D.Pesanan = D.Pesanan.filter(function (r) { return d.hapus.indexOf(r.ID_Pesanan) < 0; });
+      if (d.Sumber_Tab) D.Sumber_Tab = d.Sumber_Tab;
+      if (d.src) this.src = d.src;
+      this.info.sumberOk = d.ok !== false; this.info.sumberPesan = d.pesan || ''; if (d.nama) this.info.sumberNama = d.nama;
+      this.simpanCache();
+      return (d.Pesanan || []).length + (d.hapus || []).length;
     },
     S_: function () { var o = {}; Object.keys(YX.PENGATURAN_DEFAULT).forEach(function (k) { o[k] = YX.PENGATURAN_DEFAULT[k][0]; }); (this.D ? this.D.Pengaturan : []).forEach(function (r) { o[r.Kunci] = r.Nilai; }); return o; },
     isAdmin: function () { return this.me && this.me.peran === 'Admin'; },
     isFin: function () { return this.me && this.me.peran === 'Finance'; },
+    boleh: function (menu) { return !!this.me && YX.aksesMenu(this.S, menu, this.me.peran); },
     get: function (t, id) { var k = YX.SKEMA[t].key; return (this.D[t] || []).find(function (r) { return String(r[k]) === String(id); }) || null; }
   };
 
@@ -117,7 +133,7 @@
   // ---------------------------------------------------------------- API
   var Perf = { rows: [], add: function (a, t, s) { this.rows.push({ aksi: a, total: t, server: s == null ? null : s, net: s == null ? null : t - s }); if (this.rows.length > 120) this.rows.shift(); }, table: function () { console.table(this.rows.slice(-30)); } };
   window.Perf = Perf;
-  var BACA = /^(boot|ping|verifikasi\.publik|sistem\.status|template\.daftar|wa\.audiens|wa\.device|import\.pindai)$/;
+  var BACA = /^(boot|ping|verifikasi\.publik|sistem\.status|sumber\.(tarik|info)|kalkulasi\.baca|itinerary\.baca|aset\.data|wa\.audiens|wa\.device)$/;
 
   async function apiOnce(action, data, timeout, reqId) {
     var ctrl = new AbortController(), timer = setTimeout(function () { ctrl.abort(); }, timeout), t0 = performance.now();
@@ -133,15 +149,18 @@
   }
   async function api(action, data, opt) {
     opt = opt || {};
-    if (DEMO) return Demo.call(action, data || {});
-    var baca = BACA.test(action), reqId = baca ? '' : (opt.reqId || uuid()), tries = baca ? 3 : 2, res;
-    for (var i = 0; i < tries; i++) {
-      if (i) { await sleep(1200 * i); }
-      res = await apiOnce(action, data, opt.timeout || (baca ? (i ? 40000 : 25000) : 90000), reqId);
-      if (res.success || !res.retryable) break;
-    }
-    if (!res.success && res.data && res.data.code === 'AUTH') { App.sesiBerakhir(); }
-    return res;
+    var garis = opt.senyap ? null : (window.UI && UI.garis ? UI.garis() : null);
+    try {
+      if (DEMO) return await Demo.call(action, data || {});
+      var baca = BACA.test(action), reqId = baca ? '' : (opt.reqId || uuid()), tries = opt.tries || (baca ? 3 : 2), res;
+      for (var i = 0; i < tries; i++) {
+        if (i) { await sleep(1200 * i); }
+        res = await apiOnce(action, data, opt.timeout || (baca ? (i ? 40000 : 25000) : 90000), reqId);
+        if (res.success || !res.retryable) break;
+      }
+      if (!res.success && res.data && res.data.code === 'AUTH') { App.sesiBerakhir(); }
+      return res;
+    } finally { if (garis) garis(); }
   }
 
   // Antrean tulis berurutan → optimistic aman (tidak saling timpa)
@@ -152,22 +171,26 @@
     rantai = p.catch(function () { });
     return p;
   }
-  var TANPA_OPTIMIS = /^(pengguna\.|wa\.|notif\.|crm\.sync|rekap\.hitungUlang)/;
+  var TANPA_OPTIMIS = /^(pengguna\.|wa\.|notif\.|crm\.sync)/;
+  var LABEL_PROSES = { pesanan: 'Menyimpan ke Google Sheets', kalkulasi: 'Menyimpan kalkulasi', paket: 'Menyimpan paket', manifest: 'Menyimpan manifest', rekap: 'Memperbarui rekap', bayar: 'Mencatat pembayaran', tagihan: 'Memperbarui tagihan',
+    invoice: 'Menyimpan invoice', tl: 'Menyimpan Tim Lapang', biaya: 'Menyimpan biaya operasional', pengaturan: 'Menyimpan pengaturan', pengguna: 'Menyimpan pengguna', crm: 'Memperbarui CRM', wa: 'Memproses WhatsApp', notif: 'Memproses notifikasi' };
   async function aksiJalan(action, data, opt) {
-    var btn = opt.btn, label;
-    if (btn) { label = btn.innerHTML; btn.classList.add('loading'); btn.innerHTML = ic('loader-circle', 18, 'spin') + '<span>' + (opt.loadingText || 'Memproses…') + '</span>'; }
+    var btn = opt.btn, label, pil = opt.diamProses ? null : UI.proses(opt.proses || LABEL_PROSES[action.split('.')[0]] || 'Memproses', /\.hapus$|\.batal$/.test(action) ? 'hapus' : '');
+    if (btn) { label = btn.innerHTML; btn.classList.add('loading'); btn.innerHTML = UI.putar(16) + '<span>' + (opt.loadingText || 'Memproses…') + '</span>'; }
     Store.busy++;
+    var hasilAkhir = null;
     try {
       var engine = !!YX.ROUTES[action], res;
       if (engine && (DEMO || !TANPA_OPTIMIS.test(action))) {
         var snap = JSON.stringify(Store.D);
         var lok = YX.jalankan(hostLokal(Store.D), Store.me, action, data);
-        if (!lok.success) { Store.D = JSON.parse(snap); if (!opt.diam) UI.toast(lok.message, 'err'); return lok; }
+        if (!lok.success) { Store.D = JSON.parse(snap); if (!opt.diam) UI.toast(lok.message, 'err'); return (hasilAkhir = lok); }
         if (DEMO) {
+          await sleep(action.indexOf('pesanan.') === 0 ? 420 : 160);   // simulasi jeda tulis ke Google Sheets
           Store.simpanCache(); App.segarkan();
           if (lok.message && !opt.diam) UI.toast(lok.message, 'ok');
           if ((lok.jobs && lok.jobs.length) || lok.nq) Pekerja.jalan();
-          return lok;
+          return (hasilAkhir = lok);
         }
         App.segarkan();                               // tampil instan (optimistic)
         res = await api(action, data);
@@ -180,12 +203,48 @@
       }
       if (!opt.diam) UI.toast(res.message || (res.success ? 'Tersimpan.' : 'Gagal.'), res.success ? 'ok' : 'err');
       if (res.success && ((res.jobs && res.jobs.length) || res.nq)) Pekerja.jalan();
-      return res;
+      return (hasilAkhir = res);
     } finally {
       Store.busy--;
+      if (pil) pil(hasilAkhir ? hasilAkhir.success : false);
       if (btn && btn.isConnected) { btn.classList.remove('loading'); btn.innerHTML = label; }
     }
   }
+
+  // ---------------------------------------------------------------- sinkron spreadsheet klien (delta)
+  var Sinkron = {
+    status: 'idle', terakhir: 0, timer: null, sibuk: false,
+    mulai: function () {
+      if (this.timer) return; var self = this;
+      this.terakhir = Date.now(); this.status = 'ok';
+      if (DEMO) return;
+      var loop = function () { self.cek().then(function () { self.timer = setTimeout(loop, self.jeda()); }); };
+      this.timer = setTimeout(loop, 1500);
+      document.addEventListener('visibilitychange', function () { if (document.visibilityState === 'visible') self.cek(true); });
+      window.addEventListener('online', function () { self.cek(true); });
+    },
+    jeda: function () { var j = Math.min(60, Math.max(3, Number(Store.S.SUMBER_JEDA) || 4)) * 1000; return document.visibilityState === 'visible' ? (this.status === 'gagal' ? 15000 : j) : 45000; },
+    cek: async function (paksa) {
+      if (!Store.me || this.sibuk || (Store.busy && !paksa)) return; this.sibuk = true;
+      try {
+        var r = await api('ping', {}, { senyap: true, tries: 1, timeout: 12000 });
+        if (!r.success) { this.set('gagal'); return; }
+        if (r.data.src && r.data.src !== Store.src) await this.tarik();
+        if (r.data.ver && r.data.ver !== Store.ver && !Store.busy) { var b = await api('boot', {}, { senyap: true }); if (b.success && !Store.busy) { Store.setBoot(b.data); Tema.terapkan(Store.S); App.segarkan(); } }
+        if (r.data.tugas) Pekerja.jalan();
+        this.set(Store.info.sumberOk === false ? 'peringatan' : 'ok');
+      } catch (e) { this.set('gagal'); } finally { this.sibuk = false; }
+    },
+    tarik: async function () {
+      this.set('menarik');
+      var known = (Store.D.Pesanan || []).map(function (p) { return p.ID_Pesanan + ':' + p.H; }).join(',');
+      var r = await api('sumber.tarik', { known: known }, { senyap: true, tries: 2 });
+      if (!r.success) { this.set('gagal'); return; }
+      var n = Store.terapkanSumber(r.data);
+      if (n) { App.segarkan(); UI.kilat(n + ' baris diperbarui dari Google Sheets'); }
+    },
+    set: function (s) { this.status = s; if (s === 'ok' || s === 'peringatan') this.terakhir = Date.now(); if (window.App && App.indikatorSinkron) App.indikatorSinkron(); }
+  };
 
   // ---------------------------------------------------------------- pekerja antrean
   var Pekerja = {
@@ -195,20 +254,20 @@
       this.aktif = true; this.lagi = false;
       try {
         for (var putaran = 0; putaran < 8; putaran++) {
-          var r = await api('tugas.proses', {});
+          var r = await api('tugas.proses', {}, { senyap: true });
           if (r && r.success) { Store.terapkan(r); App.segarkan(); }
           var sisa = r && r.data ? r.data.sisa : 0;
           if (!sisa && !this.lagi) break; this.lagi = false;
           if (r && !r.success) break;
         }
-        var n = await api('notif.proses', {});
+        var n = await api('notif.proses', {}, { senyap: true });
         if (n && n.success) { Store.terapkan(n); App.segarkan(); }
       } finally { this.aktif = false; }
     }
   };
 
   // ---------------------------------------------------------------- tema
-  var FONTS = ['Plus Jakarta Sans', 'Poppins', 'Inter', 'Outfit', 'Manrope', 'DM Sans', 'Nunito', 'Sora', 'Lexend', 'Figtree', 'Urbanist', 'Montserrat'];
+  var FONTS = ['Plus Jakarta Sans', 'Bricolage Grotesque', 'Manrope', 'DM Sans', 'Figtree', 'Outfit', 'Sora', 'Lexend', 'Urbanist', 'Nunito', 'Poppins', 'Montserrat'];
   function campur(hex, ke, p) {
     function rgb(h) { h = h.replace('#', ''); return [0, 2, 4].map(function (i) { return parseInt(h.substr(i, 2), 16); }); }
     var a = rgb(hex), b = rgb(ke); return '#' + a.map(function (v, i) { return ('0' + Math.round(v + (b[i] - v) * p).toString(16)).slice(-2); }).join('');
@@ -228,9 +287,9 @@
         root.style.setProperty(k, v[k]);
       });
       this.muatFont([S.FONT_BODY, S.FONT_HEAD]);
-      document.title = (S.APP_NAMA || 'YukX') + ' — ' + (S.APP_TAGLINE || 'Report Automation');
+      document.title = (S.APP_NAMA || 'YukBanyuwangi') + ' — ' + (S.APP_TAGLINE || 'Trip Operation & Report');
       var fav = document.getElementById('favicon'); if (fav) fav.href = S.FAVICON_URL || 'assets/favicon.png';
-      if (simpan !== false) LS.set('yukx:tema', { vars: v, fonts: [S.FONT_BODY, S.FONT_HEAD], title: document.title, fav: S.FAVICON_URL || '' });
+      if (simpan !== false) LS.set('yb:tema', { vars: v, fonts: [S.FONT_BODY, S.FONT_HEAD], title: document.title, fav: S.FAVICON_URL || '' });
     },
     muatFont: function (list) {
       (list || []).forEach(function (f) {
@@ -240,11 +299,11 @@
     },
     gelap: function (on) {
       var root = document.documentElement; root.setAttribute('data-theme', on ? 'dark' : 'light');
-      LS.set('yukx:gelap', !!on); this.terapkan(Store.S, false);
+      LS.set('yb:gelap', !!on); this.terapkan(Store.S, false);
     },
     FONTS: FONTS
   };
 
   window.Halaman = window.Halaman || {};
-  window.Core = { DEMO: DEMO, CFG: CFG, esc: esc, ic: ic, LS: LS, uuid: uuid, sha256: sha256, debounce: debounce, sleep: sleep, F: F, Store: Store, hostLokal: hostLokal, api: api, aksi: aksi, Pekerja: Pekerja, Tema: Tema, U: U, HT: HT };
+  window.Core = { DEMO: DEMO, CFG: CFG, esc: esc, ic: ic, LS: LS, uuid: uuid, sha256: sha256, debounce: debounce, sleep: sleep, F: F, Store: Store, hostLokal: hostLokal, api: api, aksi: aksi, Pekerja: Pekerja, Sinkron: Sinkron, Tema: Tema, U: U, HT: HT };
 })();

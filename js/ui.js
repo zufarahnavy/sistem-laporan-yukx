@@ -1,6 +1,7 @@
 /* =====================================================================
-   YukX — ui.js : komponen UI (toast, modal/bottom-sheet, drawer, popover,
-   konfirmasi, form, tabel→kartu, stat, count-up, unggah gambar, cmd+K)
+   YukBanyuwangi — ui.js : komponen UI (toast, modal/bottom-sheet, drawer, popover,
+   konfirmasi, form, tabel→kartu, stat, count-up, unggah gambar) + animasi proses
+   bermotif garis kontur (garis atas, pil proses, langkah, kerangka muat)
    ===================================================================== */
 (function () {
   'use strict';
@@ -157,7 +158,7 @@
     if (foto) return '<span class="' + cls + '"><img src="' + esc(foto) + '" alt="" width="36" height="36" loading="lazy" onerror="this.parentNode.textContent=\'' + esc(U.inisial(nama)) + '\'"></span>';
     return '<span class="' + cls + '">' + esc(U.inisial(nama)) + '</span>';
   }
-  var TONE = { 'Lunas': 'ok', 'Terverifikasi': 'ok', 'Final': 'ok', 'Aktif': 'ok', 'Terkirim': 'ok', 'Selesai': 'ok', 'Open': 'info', 'Berjalan': 'solid', 'Terbit': 'info', 'DP': 'info', 'Booking': 'warn', 'Menunggu': 'warn', 'Menunggu Audit': 'warn', 'Perlu Audit Ulang': 'warn', 'Draft': 'neutral', 'Antri': 'neutral', 'Proses': 'info', 'Digantikan': 'neutral', 'Batal': 'danger', 'Ditolak': 'danger', 'Gagal': 'danger', 'Perlu Revisi': 'danger', 'Dihapus': 'danger', 'Nonaktif': 'neutral', 'Belum Ada Realisasi': 'neutral', 'Jatuh Tempo': 'danger', 'Dihentikan': 'neutral' };
+  var TONE = { 'Terkunci': 'ok', 'Siap Dicek': 'warn', 'Belum Lunas': 'warn', 'Terbit': 'ok', 'Berubah': 'warn', 'Belum Dibuat': 'neutral', 'Akan Datang': 'info', 'Tanpa Tanggal': 'neutral', 'OK': 'ok', 'Lunas': 'ok', 'Terverifikasi': 'ok', 'Final': 'ok', 'Aktif': 'ok', 'Terkirim': 'ok', 'Selesai': 'ok', 'Open': 'info', 'Berjalan': 'solid', 'DP': 'info', 'Booking': 'warn', 'Menunggu': 'warn', 'Menunggu Audit': 'warn', 'Perlu Audit Ulang': 'warn', 'Draft': 'neutral', 'Antri': 'neutral', 'Proses': 'info', 'Digantikan': 'neutral', 'Batal': 'danger', 'Ditolak': 'danger', 'Gagal': 'danger', 'Perlu Revisi': 'danger', 'Dihapus': 'danger', 'Nonaktif': 'neutral', 'Belum Ada Realisasi': 'neutral', 'Jatuh Tempo': 'danger', 'Dihentikan': 'neutral' };
   var IKON_STATUS = { ok: 'circle-check', warn: 'clock', danger: 'circle-x', info: 'circle', neutral: 'circle', solid: 'activity' };
   function badge(teks, tone, ikon) { tone = tone || TONE[teks] || 'info'; return '<span class="badge ' + tone + '">' + (ikon !== false ? ic(ikon || IKON_STATUS[tone] || 'circle', 14) : '') + esc(teks) + '</span>'; }
   function stat(o) {
@@ -212,6 +213,74 @@
     });
   }
 
+
+  // ---------------------------------------------------------------- animasi proses (motif garis kontur)
+  var KONTUR = ['M24 6c9 0 17 7 17 17s-7 19-17 19S6 34 7 23 15 6 24 6Z', 'M24 12c6 0 11 5 11 11s-5 13-11 13-12-6-11-13 5-11 11-11Z', 'M24 18c3 0 5 2 5 5s-2 7-5 7-6-3-5-7 2-5 5-5Z'];
+  function putar(ukuran, kelas) {
+    return '<svg class="kontur ' + (kelas || '') + '" width="' + (ukuran || 18) + '" height="' + (ukuran || 18) + '" viewBox="0 0 48 48" aria-hidden="true">' + KONTUR.map(function (d, i) { return '<path class="k' + (i + 1) + '" d="' + d + '" pathLength="100"/>'; }).join('') + '</svg>';
+  }
+  var CENTANG = '<svg class="centang" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5l4.2 4.2L19 7" pathLength="100"/></svg>';
+  var SILANG = '<svg class="centang silang" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 7l10 10M17 7 7 17" pathLength="100"/></svg>';
+  // Garis tipis di atas layar untuk setiap panggilan server (muncul setelah 140 ms agar yang cepat tidak berkedip)
+  var nGaris = 0, tGaris = null;
+  function garis() {
+    var g = document.getElementById('garis'); if (!g) { g = el('<div id="garis" aria-hidden="true"><i></i></div>'); document.body.appendChild(g); }
+    nGaris++; clearTimeout(tGaris); if (nGaris === 1) tGaris = setTimeout(function () { if (nGaris > 0) g.classList.add('on'); }, 140);
+    var selesai = false;
+    return function () { if (selesai) return; selesai = true; nGaris = Math.max(0, nGaris - 1); if (!nGaris) { clearTimeout(tGaris); g.classList.remove('on'); } };
+  }
+  // Pil proses di bawah layar untuk setiap tulis data
+  var antre = [];
+  function proses(label, jenis) {
+    var box = document.getElementById('proses'); if (!box) { box = el('<div id="proses" role="status" aria-live="polite"></div>'); document.body.appendChild(box); }
+    var it = { label: label, jenis: jenis || '', t0: Date.now(), selesai: false };
+    antre.push(it); gambar();
+    function gambar() {
+      var aktif = antre.filter(function (x) { return !x.selesai; }), top = aktif[aktif.length - 1];
+      if (!top) return;
+      box.className = 'on'; box.innerHTML = '<span class="proses__ik">' + putar(22) + '</span><span class="proses__t"><b>' + esc(top.label) + '…</b>' + (aktif.length > 1 ? '<small>' + aktif.length + ' proses berjalan</small>' : '<small>Jangan tutup halaman ini</small>') + '</span>';
+    }
+    return function (ok, teks) {
+      if (it.selesai) return; it.selesai = true;
+      var sisa = antre.filter(function (x) { return !x.selesai; });
+      if (sisa.length) { gambar(); return; }
+      var lama = Date.now() - it.t0;
+      box.className = 'on ' + (ok ? 'sukses' : 'gagal');
+      box.innerHTML = '<span class="proses__ik">' + (ok ? CENTANG : SILANG) + '</span><span class="proses__t"><b>' + esc(teks || (ok ? (it.jenis === 'hapus' ? 'Dihapus' : 'Tersimpan') : 'Belum berhasil')) + '</b><small>' + (ok ? (lama < 1000 ? lama + ' ms' : (lama / 1000).toFixed(1).replace('.', ',') + ' detik') : 'Lihat pesan di atas') + '</small></span>';
+      setTimeout(function () { if (antre.every(function (x) { return x.selesai; })) { box.className = 'keluar'; antre = []; } }, ok ? 1100 : 1900);
+    };
+  }
+  // Kabar kecil sinkron (tanpa menutupi kerja pengguna)
+  function kilat(teks) {
+    var k = document.getElementById('kilat'); if (!k) { k = el('<div id="kilat" role="status" aria-live="polite"></div>'); document.body.appendChild(k); }
+    k.innerHTML = putar(14, 'diam') + '<span>' + esc(teks) + '</span>'; k.classList.remove('on'); void k.offsetWidth; k.classList.add('on');
+    clearTimeout(k._t); k._t = setTimeout(function () { k.classList.remove('on'); }, 2600);
+  }
+  /** Proses bertahap (mis. terbitkan manifest): kartu langkah dengan status tiap tahap. */
+  function langkah(judul, daftar) {
+    var s = scrim(function () { }), box = el('<div class="langkah" role="dialog" aria-modal="true" aria-label="' + esc(judul) + '"><div class="langkah__ik">' + putar(44, 'besar') + '</div><b class="langkah__j">' + esc(judul) + '</b><ol>' +
+      daftar.map(function (t) { return '<li data-st="tunggu"><span class="titik"></span><span>' + esc(t) + '</span></li>'; }).join('') + '</ol><p class="langkah__p muted"></p></div>');
+    document.body.appendChild(box); kunciScroll(true); requestAnimationFrame(function () { box.classList.add('show'); });
+    var li = box.querySelectorAll('li');
+    var h = {
+      aktif: function (i) { li.forEach(function (x, j) { if (j < i && x.dataset.st !== 'gagal') x.dataset.st = 'ok'; if (j === i) x.dataset.st = 'jalan'; }); },
+      ok: function (i) { if (li[i]) li[i].dataset.st = 'ok'; },
+      gagal: function (i, pesan) { if (li[i]) li[i].dataset.st = 'gagal'; box.querySelector('.langkah__p').textContent = pesan || ''; box.classList.add('error'); box.querySelector('.langkah__ik').innerHTML = SILANG; },
+      lewati: function (i) { if (li[i]) li[i].dataset.st = 'lewat'; },
+      tutup: function (ok, pesan) {
+        if (ok) { li.forEach(function (x) { if (x.dataset.st === 'jalan' || x.dataset.st === 'tunggu') x.dataset.st = 'ok'; }); box.querySelector('.langkah__ik').innerHTML = CENTANG; box.classList.add('sukses'); if (pesan) box.querySelector('.langkah__p').textContent = pesan; }
+        setTimeout(function () { box.classList.remove('show'); s.classList.remove('show'); setTimeout(function () { box.remove(); s.remove(); if (!lapisan.length) kunciScroll(false); }, 280); }, ok ? 900 : 2600);
+      }
+    };
+    return h;
+  }
+  /** Kerangka muat (shimmer) untuk tabel/kartu saat data sumber belum datang. */
+  function kerangka(baris, kolom) {
+    var b = []; for (var i = 0; i < (baris || 6); i++) { var c = []; for (var j = 0; j < (kolom || 5); j++) c.push('<span class="sk" style="width:' + (j === 0 ? 70 : 40 + ((i * 7 + j * 13) % 45)) + '%"></span>'); b.push('<div class="kerangka__b">' + c.join('') + '</div>'); }
+    return '<div class="kerangka" aria-busy="true" aria-label="Memuat data">' + b.join('') + '</div>';
+  }
+
   window.UI = { el: el, toast: toast, modal: modal, drawer: drawer, konfirmasi: konfirmasi, popover: popover, tutupPopover: tutupPopover, tutupSemua: tutupSemua, form: form, siapkanForm: siapkanForm, bacaForm: bacaForm, cekWajib: cekWajib,
-    tabel: tabel, kosong: kosong, avatar: avatar, badge: badge, TONE: TONE, stat: stat, hitung: hitung, hitungNaik: hitungNaik, pasTeks: pasTeks, pilihGambar: pilihGambar, perkecil: perkecil };
+    tabel: tabel, kosong: kosong, avatar: avatar, badge: badge, TONE: TONE, stat: stat, hitung: hitung, hitungNaik: hitungNaik, pasTeks: pasTeks, pilihGambar: pilihGambar, perkecil: perkecil,
+    putar: putar, garis: garis, proses: proses, kilat: kilat, langkah: langkah, kerangka: kerangka };
 })();

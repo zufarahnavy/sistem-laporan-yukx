@@ -1,9 +1,9 @@
-/* YukX — Halaman Log Aktivitas & Riwayat Audit Sistem */
+/* YukBanyuwangi — Halaman Log Aktivitas & Riwayat Audit Sistem */
 (function () {
   'use strict';
   var C = window.Core, Store = C.Store, esc = C.esc, ic = C.ic, F = C.F, U = C.U;
   var st = { q: '', user: '', kat: '', hal: 1, pilih: '' }, PER = 20;
-  var KAT = { 'Finansial & Invoice': ['receipt', ''], 'Budgeting & RAB': ['calculator', 'warn'], 'Manifest & Customer': ['users', 'ok'], 'Sistem': ['settings', 'neutral'] };
+  var KAT = { 'Pesanan': ['table-2', ''], 'Kalkulasi': ['calculator', 'warn'], 'Manifest': ['clipboard-list', 'ok'], 'Rekap': ['chart-column', 'warn'], 'Invoice': ['receipt', ''], 'Tagihan': ['hand-coins', 'ok'], 'Laba Rugi': ['trending-up', ''], 'Laporan': ['file-down', 'neutral'], 'CRM': ['contact', 'neutral'], 'Sistem': ['settings', 'neutral'] };
 
   var H = {
     judul: 'Log Aktivitas',
@@ -28,7 +28,7 @@
       var aktifHariIni = D.Pengguna.filter(function (u) { return u.Status === 'Aktif' && String(u.Terakhir_Login).slice(0, 10) >= U.tambahHari(today, -1); }).length;
       var sinkron = D.Antrean_Tugas.filter(function (t) { return t.Status === 'Selesai'; }).length + D.Invoice.filter(function (i) { return /"cal":"ok"/.test(i.Status_Proses); }).length;
       el.querySelector('#lg-kpi').innerHTML = UI.stat({ hero: true, label: 'Total aktivitas tercatat', nilai: UI.hitung(logs.length) + ' <small style="color:#fff">log</small>', kaki: '<span class="badge glass">' + logs.filter(function (r) { return r.Waktu.slice(0, 10) === today; }).length + ' hari ini</span><span>0 anomali</span>' }) +
-        UI.stat({ label: 'Aksi finansial & budgeting', ikon: 'receipt', nilai: UI.hitung(logs.filter(function (r) { return /Finansial|Budget/.test(r.Kategori); }).length) + ' <small>aksi</small>', kaki: '<span class="badge ok">100% valid</span>' }) +
+        UI.stat({ label: 'Aksi rekap, invoice & tagihan', ikon: 'receipt', nilai: UI.hitung(logs.filter(function (r) { return /Rekap|Invoice|Tagihan|Laba/.test(r.Kategori); }).length) + ' <small>aksi</small>', kaki: '<span class="badge ok">100% valid</span>' }) +
         UI.stat({ label: 'Google Workspace sync', ikon: 'refresh-cw', nilai: UI.hitung(sinkron) + ' <small>event</small>', kaki: '<span>PDF Drive · Calendar · Gmail</span>' }) +
         UI.stat({ label: 'Pengguna aktif saat ini', ikon: 'users', nilai: aktifHariIni + ' / ' + D.Pengguna.filter(function (u) { return u.Status === 'Aktif'; }).length + ' <small>pengguna</small>', kaki: '<span>' + D.Pengguna.filter(function (u) { return u.Peran === 'Admin'; }).length + ' Admin · ' + D.Pengguna.filter(function (u) { return u.Peran === 'Finance'; }).length + ' Finance</span><span class="badge neutral">HMAC token</span>' });
       var su = el.querySelector('#lg-user'); if (su.options.length <= 1) Object.keys(users).sort().forEach(function (u) { su.insertAdjacentHTML('beforeend', '<option>' + esc(u) + '</option>'); });

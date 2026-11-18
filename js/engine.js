@@ -1,6 +1,6 @@
 /**
  * ============================================================================
- *  YukX — LOGIKA.gs  ·  Mesin Logika Bisnis Bersama  ·  v1.1.0
+ *  YukBanyuwangi — LOGIKA.gs  ·  Mesin Logika Bisnis Bersama  ·  v2.0.0
  * ============================================================================
  *  Berkas ini dipakai di DUA tempat TANPA perubahan:
  *    1) Backend Google Apps Script  → Logika.gs
@@ -10,95 +10,209 @@
  *  Semua akses data & layanan luar lewat objek "host" (H) yang disuntikkan:
  *    H.db   : { all(t), insert(t, rows), update(t, key, id, patch) -> row, remove(t, key, id) }
  *    H.now(): Date      H.uuid(): string      H.hash(pin, salt): string
- *    H.kirimWA(list, jeda) -> [{ok, respon}]  H.cekWA(nomor[]) -> {ok, peta, pesan}
- *    H.kirimEmail(msg) -> {ok, respon}        H.waSiap(): boolean   H.sisaEmail(): number
- *  Semua teks & komentar berbahasa Indonesia.
+ *    H.waSiap(): boolean   H.sisaEmail(): number
+ *
+ *  SUMBER DATA UTAMA = spreadsheet "Database Pemesanan" milik klien (akun Google
+ *  lain). Tabel virtual "Pesanan" & "Sumber_Tab" diisi host dari spreadsheet itu;
+ *  tulis ke tabel virtual diteruskan host ke spreadsheet klien (dua arah).
+ *  Tabel lain (kalkulasi, manifest, rekap, invoice, tagihan, dst.) disimpan di
+ *  database aplikasi dan dikaitkan lewat kolom "ID SISTEM" (ID_Pesanan).
  * ============================================================================
  */
 var YX = (function () {
   'use strict';
 
-  var VERSI = '1.1.0';
+  var VERSI = '2.0.0';
   var TZ_MENIT = 420; // WIB (UTC+7)
 
   // ==========================================================================
-  // 1. SKEMA DATABASE (1 spreadsheet, 1 sheet per tabel)
+  // 1. SKEMA DATABASE
   // ==========================================================================
   var SKEMA = {
+    // ---- tabel VIRTUAL (spreadsheet klien) — tidak disimpan di database aplikasi
+    Pesanan: { key: 'ID_Pesanan', prefix: 'PSN', pendek: true, virtual: true, cols: ['ID_Pesanan', 'Tab', 'Baris', 'No', 'Nama', 'PIC', 'No_HP', 'Pax', 'Trip', 'Tgl_Mulai', 'Tgl_Selesai', 'Asal', 'Sumber_Info', 'Email', 'Instagram', 'Penjemputan', 'Lokasi_Drop', 'Harga', 'Total', 'DP', 'Sisa', 'Setoran', 'Link_Bukti_TF', 'Link_Itinerary', 'Link_Kalkulasi', 'Tgl_Pesan', 'Checklist', 'Lain', 'Rumus', 'H'] },
+    Sumber_Tab: { key: 'Nama', prefix: '', virtual: true, cols: ['Nama', 'Urutan', 'Header', 'Kolom', 'Jumlah', 'Ada_ID', 'Ada_Tgl_Pesan'] },
+    // ---- tabel aplikasi
     Pengguna: { key: 'ID_Pengguna', prefix: 'USR', cols: ['ID_Pengguna', 'Nama', 'Email', 'Peran', 'Pengelola', 'Hash_PIN', 'Salt', 'Status', 'No_WA', 'Foto_URL', 'Terakhir_Login', 'Dibuat'] },
-    Customer: { key: 'ID_Customer', prefix: 'CUS', cols: ['ID_Customer', 'Nama', 'No_WA', 'Email', 'Alamat', 'Kota', 'Identitas', 'Tgl_Lahir', 'Gender', 'Kontak_Darurat', 'Telp_Darurat', 'Catatan_Medis', 'Tag', 'Catatan', 'Status', 'Tgl_Terdaftar', 'Diperbarui'] },
-    Trip: { key: 'ID_Trip', prefix: 'TRP', cols: ['ID_Trip', 'Kode', 'Nama', 'Tujuan', 'Tgl_Berangkat', 'Tgl_Pulang', 'Kuota', 'Harga_Default', 'Meeting_Point', 'Akomodasi', 'Foto_URL', 'Deskripsi', 'Status', 'Folder_ID', 'Dibuat'] },
-    Peserta_Trip: { key: 'ID_Peserta', prefix: 'PST', cols: ['ID_Peserta', 'ID_Trip', 'ID_Customer', 'ID_Penjualan', 'Jumlah_Pax', 'Status_Data', 'Tgl_Masuk', 'Catatan'] },
-    Anggota_Rombongan: { key: 'ID_Anggota', prefix: 'ANG', cols: ['ID_Anggota', 'ID_Penjualan', 'ID_Customer', 'Nama', 'Identitas', 'Gender', 'Tgl_Lahir', 'No_HP', 'Ukuran_Baju', 'Kamar', 'Catatan', 'Urutan'] },
-    Penjualan: { key: 'ID_Penjualan', prefix: 'PJ', cols: ['ID_Penjualan', 'ID_Customer', 'ID_Trip', 'Jumlah_Pax', 'Harga_per_Pax', 'Diskon', 'Total', 'Terbayar', 'Sisa', 'Status', 'Review_Peserta', 'Jatuh_Tempo', 'ID_Event', 'Catatan', 'Tgl_Booking', 'Dibuat_Oleh', 'Diperbarui'] },
-    Pembayaran: { key: 'ID_Bayar', prefix: 'BYR', cols: ['ID_Bayar', 'ID_Penjualan', 'Jenis', 'Tanggal', 'Nominal', 'Metode', 'Link_Bukti', 'Status_Verifikasi', 'Diverifikasi_Oleh', 'Catatan', 'Dibuat_Oleh', 'Dibuat'] },
-    Invoice: { key: 'No_Invoice', prefix: '', cols: ['No_Invoice', 'ID_Penjualan', 'Jenis', 'Tgl_Terbit', 'Jatuh_Tempo', 'Nominal', 'Status', 'Link_PDF', 'File_ID', 'ID_Event_Calendar', 'Kode_Verifikasi', 'Status_Proses', 'Catatan', 'Dibuat_Oleh', 'Dibuat'] },
-    Kategori_Biaya: { key: 'ID_Kategori', prefix: 'KAT', cols: ['ID_Kategori', 'Nama', 'Ikon', 'Urutan', 'Aktif'] },
-    Budget_Header: { key: 'ID_Budget', prefix: 'BGT', cols: ['ID_Budget', 'ID_Trip', 'Versi', 'Status', 'Total', 'Alasan_Revisi', 'Catatan_Keputusan', 'Dibuat_Oleh', 'Tgl_Dibuat', 'Disetujui_Oleh', 'Tgl_Disetujui'] },
-    Budget_Item: { key: 'ID_Item', prefix: 'BIT', cols: ['ID_Item', 'ID_Budget', 'Kategori', 'Uraian', 'Keterangan', 'Qty', 'Satuan', 'Harga_Satuan', 'Subtotal', 'Urutan'] },
-    Realisasi_Biaya: { key: 'ID_Realisasi', prefix: 'RLS', cols: ['ID_Realisasi', 'ID_Trip', 'Kategori', 'Uraian', 'Nominal', 'Tanggal', 'Link_Bukti', 'Status', 'Diinput_Oleh', 'Catatan', 'Dibuat', 'Catatan_Verifikasi', 'Diverifikasi_Oleh'] },
-    Log_Revisi_Budget: { key: 'ID_Log', prefix: 'LRV', acak: true, cols: ['ID_Log', 'ID_Budget', 'ID_Trip', 'Siapa', 'Kapan', 'Item', 'Nilai_Lama', 'Nilai_Baru', 'Alasan'] },
-    Manifest: { key: 'ID_Manifest', prefix: 'MNF', cols: ['ID_Manifest', 'Tipe', 'ID_Customer', 'ID_Penjualan', 'ID_Trip', 'Status', 'Versi', 'Link_File', 'File_ID', 'Link_Excel', 'ID_Lampiran_Calendar', 'Catatan', 'Tgl_Final', 'Dibuat_Oleh', 'Diperbarui'] },
-    Rekap_Operasional: { key: 'ID_Trip', prefix: '', cols: ['ID_Trip', 'Pax', 'Pendapatan', 'Kas_Masuk', 'Budget_Aktif', 'Versi_Budget', 'Realisasi', 'Selisih', 'Laba', 'Margin', 'Status_Audit', 'Diverifikasi_Oleh', 'Tgl_Verifikasi', 'Catatan_Audit', 'Diperbarui', 'Tgl_Lapor', 'Dilapor_Oleh', 'Penjelasan_Lapor', 'Biaya_Final', 'Laba_Final', 'Tgl_Final'] },
+    Tim_Lapang: { key: 'ID_TL', prefix: 'TL', cols: ['ID_TL', 'Nama', 'Peran', 'No_HP', 'Email', 'Status', 'Catatan', 'Dibuat'] },
+    Kalkulasi: { key: 'ID_Pesanan', prefix: '', cols: ['ID_Pesanan', 'Sumber', 'Link_CS', 'Pax', 'Paket', 'Catatan', 'Dibuat_Oleh', 'Diperbarui'] },
+    Kalkulasi_Item: { key: 'ID_Item', prefix: 'KLI', acak: true, cols: ['ID_Item', 'ID_Pesanan', 'Uraian', 'Tetap', 'Per_Pax', 'Budget', 'Terima_TL', 'Ke_TL', 'Grup', 'Kolom', 'Asal', 'Urutan'] },
+    Peta_Item: { key: 'Kunci', prefix: '', cols: ['Kunci', 'Uraian', 'Bagian', 'Ke_TL', 'Grup', 'Kolom', 'Diperbarui'] },
+    Paket_Kalkulasi: { key: 'ID_Paket', prefix: 'PKT', cols: ['ID_Paket', 'Nama', 'Bagian', 'Item', 'Catatan', 'Diperbarui'] },
+    Manifest: { key: 'ID_Pesanan', prefix: '', cols: ['ID_Pesanan', 'PIC_Kantor', 'TL', 'Durasi', 'Data_Tamu', 'Checklist', 'Catatan', 'Itinerary', 'Peserta', 'Tampil_Budget', 'Status', 'Versi', 'Link_PDF', 'File_ID', 'Diterbitkan', 'Diundang', 'Dibuat_Oleh', 'Diperbarui'] },
+    Kalender_Event: { key: 'ID_Pesanan', prefix: '', cols: ['ID_Pesanan', 'Event_ID', 'Hash', 'Lampiran', 'Tamu', 'Status', 'Pesan', 'Diperbarui'] },
+    Rekap: { key: 'ID_Pesanan', prefix: '', cols: ['ID_Pesanan', 'Bagian', 'Kode_Trip', 'Kapal', 'Tambahan', 'Status', 'Catatan', 'Diajukan_Oleh', 'Tgl_Ajukan', 'Dikunci_Oleh', 'Tgl_Kunci', 'Snapshot', 'Penjualan_Final', 'Pengeluaran_Final', 'Laba_Final', 'Riwayat', 'Diperbarui'] },
+    Pembayaran: { key: 'ID_Bayar', prefix: 'BYR', cols: ['ID_Bayar', 'ID_Pesanan', 'Tanggal', 'Nominal', 'Jenis', 'Metode', 'Link_Bukti', 'Catatan', 'Dicatat_Oleh', 'Dibuat'] },
+    Tagihan: { key: 'ID_Pesanan', prefix: '', cols: ['ID_Pesanan', 'Status_Manual', 'Jatuh_Tempo', 'Catatan', 'Terakhir_Diingatkan', 'Jumlah_Pengingat', 'Oleh', 'Diperbarui'] },
+    Invoice: { key: 'ID_Invoice', prefix: 'INV', cols: ['ID_Invoice', 'ID_Pesanan', 'No_Invoice', 'Customer_ID', 'Urutan', 'Judul', 'Tanggal', 'Bill_To', 'Item', 'Disc', 'DP', 'Note_Judul', 'Note_Isi', 'Status', 'Link_PDF', 'File_ID', 'Kode_Verifikasi', 'Dibuat_Oleh', 'Dibuat', 'Diperbarui'] },
+    Biaya_Operasional: { key: 'ID_Biaya', prefix: 'OPS', cols: ['ID_Biaya', 'Bulan', 'Tanggal', 'Kategori', 'Uraian', 'Nominal', 'Catatan', 'Dibuat_Oleh', 'Dibuat'] },
     Pengaturan: { key: 'Kunci', prefix: '', cols: ['Kunci', 'Nilai', 'Keterangan'] },
     Log_Aktivitas: { key: 'ID_Log', prefix: 'LOG', acak: true, cols: ['ID_Log', 'Waktu', 'Pengguna', 'Peran', 'Aksi', 'Kategori', 'Objek', 'Detail'] },
     Antrean_Tugas: { key: 'ID_Tugas', prefix: 'TGS', acak: true, cols: ['ID_Tugas', 'Jenis', 'Ref', 'Payload', 'Status', 'Percobaan', 'Hasil', 'Dibuat', 'Selesai'] },
     AntrianNotif: { key: 'AntrianID', prefix: 'ANT', acak: true, cols: ['AntrianID', 'Kanal', 'Tujuan', 'NamaPenerima', 'Subjek', 'Pesan', 'Lampiran', 'Event', 'RefID', 'BlastID', 'Status', 'Percobaan', 'Respon', 'DibuatPada', 'DikirimPada'] },
     BlastWA: { key: 'BlastID', prefix: 'BLW', cols: ['BlastID', 'Judul', 'Pesan', 'Sasaran', 'Total', 'Terkirim', 'Gagal', 'UkuranBatch', 'JedaDetik', 'Status', 'DibuatOleh', 'Tanggal', 'SelesaiPada'] },
     CRM_Kontak: { key: 'KontakID', prefix: 'KTK', cols: ['KontakID', 'Nama', 'Email', 'NoWA', 'Segmen', 'Sumber', 'RefID', 'Tag', 'StatusWA', 'CekWAAt', 'EmailValid', 'OptOut', 'Catatan', 'JumlahPesan', 'TerakhirDihubungi', 'Info', 'DibuatPada', 'DiperbaruiPada'] },
-    CRM_Interaksi: { key: 'InteraksiID', prefix: 'INT', acak: true, cols: ['InteraksiID', 'KontakID', 'Kanal', 'Arah', 'Ringkasan', 'RefID', 'Oleh', 'Tanggal'] },
-    Template_Dokumen: { key: 'Kode', prefix: '', cols: ['Kode', 'Nama', 'Engine', 'File_ID', 'Bidang', 'Versi', 'Aktif', 'Diperbarui'] }
+    CRM_Interaksi: { key: 'InteraksiID', prefix: 'INT', acak: true, cols: ['InteraksiID', 'KontakID', 'Kanal', 'Arah', 'Ringkasan', 'RefID', 'Oleh', 'Tanggal'] }
   };
+  var TABEL_VIRTUAL = Object.keys(SKEMA).filter(function (t) { return SKEMA[t].virtual; });
+  var TABEL_APP = Object.keys(SKEMA).filter(function (t) { return !SKEMA[t].virtual; });
 
   // Kolom angka (disimpan sebagai Number) — selain ini dianggap teks.
   var ANGKA = {};
-  ['Kuota', 'Harga_Default', 'Jumlah_Pax', 'Harga_per_Pax', 'Diskon', 'Total', 'Terbayar', 'Sisa', 'Nominal', 'Versi', 'Qty', 'Harga_Satuan', 'Subtotal', 'Urutan',
-    'Pax', 'Pendapatan', 'Kas_Masuk', 'Budget_Aktif', 'Versi_Budget', 'Realisasi', 'Selisih', 'Laba', 'Margin', 'Percobaan', 'Terkirim', 'Gagal', 'UkuranBatch', 'JumlahPesan', 'Biaya_Final', 'Laba_Final']
+  ['Baris', 'Pax', 'Harga', 'Total', 'DP', 'Sisa', 'Setoran', 'Urutan', 'Header', 'Jumlah', 'Tetap', 'Per_Pax', 'Budget', 'Terima_TL', 'Versi',
+    'Penjualan_Final', 'Pengeluaran_Final', 'Laba_Final', 'Nominal', 'Disc', 'Jumlah_Pengingat', 'Percobaan', 'Terkirim', 'Gagal', 'UkuranBatch', 'JumlahPesan']
     .forEach(function (k) { ANGKA[k] = 1; });
   // Kolom yang harus tetap teks (nomor HP/identitas tidak boleh jadi angka)
-  var TEKS_WAJIB = ['No_WA', 'Telp_Darurat', 'Identitas', 'No_HP', 'NoWA', 'Tujuan', 'JedaDetik'];
+  var TEKS_WAJIB = ['No_WA', 'No_HP', 'NoWA', 'JedaDetik', 'No_Invoice', 'Customer_ID'];
 
   var PERAN = { ADMIN: 'Admin', FINANCE: 'Finance' };
   var ADM = ['Admin'], FIN = ['Finance'], SEMUA = ['Admin', 'Finance'];
 
-  var KATEGORI_DEFAULT = [
-    ['Tiket Pesawat', 'plane'], ['Hotel & Akomodasi', 'bed-double'], ['Transportasi & Kapal', 'ship'], ['Tiket Masuk & Retribusi', 'ticket'],
-    ['Guide & Tour Leader', 'flag'], ['Konsumsi', 'utensils'], ['Dokumentasi', 'camera'], ['Perlengkapan & Merchandise', 'package'], ['Biaya Tak Terduga', 'shield-alert']
-  ];
+  // --------------------------------------------------------------------------
+  // Peta kolom spreadsheet klien → kolom kanonik (header dinormalkan: huruf besar,
+  // tanpa titik, spasi tunggal). Kolom lain tetap ditampilkan apa adanya ("Lain").
+  // --------------------------------------------------------------------------
+  var SINONIM = {
+    No: ['NO', 'NOMOR', 'NO URUT'],
+    Nama: ['NAMA', 'NAMA TAMU', 'NAMA PEMESAN'],
+    PIC: ['PIC', 'CS'],
+    No_HP: ['NO HP', 'NOHP', 'NO WA', 'NO WHATSAPP', 'WHATSAPP', 'HP', 'NO TELP'],
+    Pax: ['PAX', 'JUMLAH PAX', 'PESERTA'],
+    Trip: ['TRIP', 'JENIS TRIP', 'PAKET', 'NAMA TRIP'],
+    Tgl_Mulai: ['TANGGAL TRIP MULAI', 'TANGGAL TRIP', 'TGL TRIP', 'TANGGAL MULAI', 'TANGGAL'],
+    Tgl_Selesai: ['TANGGAL TRIP SELESAI', 'TANGGAL SELESAI', 'TGL SELESAI'],
+    Asal: ['ASAL', 'KOTA ASAL', 'DOMISILI'],
+    Sumber_Info: ['SUMBER INFO', 'SUMBER', 'INFO DARI'],
+    Email: ['EMAIL', 'E-MAIL'],
+    Instagram: ['INSTAGRAM', 'IG'],
+    Penjemputan: ['PENJEMPUTAN', 'JEMPUT', 'TITIK JEMPUT'],
+    Lokasi_Drop: ['LOKASI DROP', 'DROP', 'TITIK DROP'],
+    Harga: ['HARGA', 'HARGA JUAL', 'HARGA PER PAX'],
+    Total: ['TOTAL PENJUALAN', 'TOTAL', 'TOTAL HARGA'],
+    DP: ['DP', 'UANG MUKA'],
+    Sisa: ['SISA TAGIHAN', 'SISA', 'SISA PEMBAYARAN'],
+    Setoran: ['SETORAN'],
+    Link_Bukti_TF: ['LINK BUKTI TF', 'BUKTI TF', 'LINK BUKTI TRANSFER'],
+    Link_Itinerary: ['ITINERARY', 'LINK ITINERARY'],
+    Link_Kalkulasi: ['KALKULASI', 'LINK KALKULASI'],
+    Tgl_Pesan: ['TANGGAL PESAN', 'TGL PESAN'],
+    ID_Pesanan: ['ID SISTEM']
+  };
+  var LABEL_ID = 'ID SISTEM', LABEL_TGL_PESAN = 'TANGGAL PESAN';
+  function normalHeader(s) { return String(s == null ? '' : s).toUpperCase().replace(/\./g, ' ').replace(/[\r\n\t]+/g, ' ').replace(/\s+/g, ' ').trim(); }
+  var _peta = null;
+  function kunciKanonik(label) {
+    if (!_peta) { _peta = {}; Object.keys(SINONIM).forEach(function (k) { SINONIM[k].forEach(function (s) { _peta[s] = k; }); }); }
+    return _peta[normalHeader(label)] || '';
+  }
+
+  // Grup kalkulasi di manifest (urutan = urutan tampil, mengikuti Dummy Kalkulasi Budget)
+  var GRUP_TL = ['MAN POWER', 'KONSUMSI', 'KARCIS', 'AGEN/LAIN-LAIN', 'SERVICE'];
+
+  // Kolom rekapitulasi per bagian (mengikuti Dummy Rekapitulasi — label bisa diubah Admin)
+  var REKAP_KOLOM = {
+    YB: [['KEND', 'KEND'], ['BBM', 'BBM'], ['HOTEL', 'HOTEL'], ['KONSUM', 'KONSUM'], ['KARCIS', 'KARCIS'], ['KAPAL', 'KAPAL'], ['TLGUIDE', 'TL&GUIDE'], ['LL', 'LL/agen'], ['SERVICE', 'Service'], ['INSENTIF', 'Insentif']],
+    SB: [['KAPTEN', 'KAPTEN &ABK'], ['BBMOLI', 'BBM,OLI'], ['KORLAP', 'KORLAP'], ['KONSUMSB', 'Konsumsi + Air Mineral'], ['ASURANSI', 'Asuransi'], ['GUIDE', 'Guide'], ['GWD', 'GWD'], ['TIKET', 'Tiket'], ['ALAT', 'Perawatan Alat'], ['LAIN', 'LAIN LAIN']]
+  };
+  var REKAP_LABEL_DEFAULT = {
+    YB: { JUDUL: 'YUKBANYUWANGI', NO: 'NO', KODE: 'KODE TRIP', QTY: 'QTY', PIC: 'PIC', PRICE: 'PRICE', PENJUALAN: 'PENJUALAN', HPP: 'HPP', PENGELUARAN: 'PENGELUARAN', LABA: 'LABA KOTOR PJ', MARGIN_A: 'Margin Per Trip', MARGIN_B: 'Realisasi', RATAAN_A: 'RATAAN', RATAAN_B: 'MARGIN' },
+    SB: { JUDUL: 'SUNRISE BOAT', NO: 'NO', KODE: 'KET', QTY: 'pax', PIC: 'SB', PRICE: 'Price', PENJUALAN: 'PENJUALAN', HPP: '', PENGELUARAN: 'PENGELUARAN', LABA: 'MARGIN', MARGIN_A: 'MARGIN', MARGIN_B: 'REALISASI', RATAAN_A: 'RATAAN', RATAAN_B: 'MARGIN' }
+  };
+  // Kolom default untuk item kalkulasi (dipakai bila belum ada pilihan yang diingat)
+  var KATA_KOLOM = {
+    YB: [[/\b(BUS|JEEP|HIACE|ELF|MOBIL|KENDARAAN|INNOVA|AVANZA|TRAVEL|MINIBUS|TRANSPORT)\b/, 'KEND'], [/\b(HOTEL|PENGINAPAN|HOMESTAY|VILLA|RESORT|GLAMPING|COTTAGE)\b/, 'HOTEL'],
+      [/\b(PAKET PULAU|KAPAL|BOAT|PERAHU|SPEEDBOAT|SPEED BOAT)\b/, 'KAPAL'], [/\b(BBM|SOLAR|BENSIN|TOL|PARKIR)\b/, 'BBM'], [/\bINSENTIF\b/, 'INSENTIF'],
+      [/\b(TL|TOUR LEADER|GUIDE|DOKUMENTASI|DRIVER|CREW|FOTOGRAFER)\b/, 'TLGUIDE'], [/\b(MAKAN|AIR MINERAL|KONSUMSI|SNACK|COFFEE|LUNCH|DINNER|BREAKFAST)\b/, 'KONSUM'],
+      [/\bSERVICE\b/, 'SERVICE'], [/\b(AGEN|MASKER|LAIN)\b/, 'LL']],
+    SB: [[/\b(KAPTEN|ABK|NAHKODA)\b/, 'KAPTEN'], [/\b(BBM|OLI|SOLAR|BENSIN)\b/, 'BBMOLI'], [/\bKORLAP\b/, 'KORLAP'], [/\b(KONSUMSI|MAKAN|AIR MINERAL|SNACK|LUNCH)\b/, 'KONSUMSB'],
+      [/\bASURANSI\b/, 'ASURANSI'], [/\bGUIDE\b/, 'GUIDE'], [/\bGWD\b/, 'GWD'], [/\b(TIKET|KARCIS|RETRIBUSI)\b/, 'TIKET'], [/\b(PERAWATAN|ALAT|SNORKEL|PELAMPUNG)\b/, 'ALAT']]
+  };
+  var KATA_GRUP = [[/\b(TL|TOUR LEADER|GUIDE|DOKUMENTASI|DRIVER|CREW|FOTOGRAFER|KORLAP|KAPTEN|ABK)\b/, 'MAN POWER'], [/\b(MAKAN|AIR MINERAL|KONSUMSI|SNACK|COFFEE|LUNCH|DINNER|BREAKFAST)\b/, 'KONSUMSI'],
+    [/\bSERVICE\b/, 'SERVICE'], [/\b(AGEN|MASKER|LAIN|BBM|SOLAR|PARKIR|TOL)\b/, 'AGEN/LAIN-LAIN']];
+  var BUKAN_TL = /\b(BUS|JEEP|HIACE|ELF|MOBIL|KENDARAAN|INNOVA|AVANZA|HOTEL|PENGINAPAN|HOMESTAY|VILLA|RESORT|PAKET PULAU|KAPAL|BOAT|PERAHU|SPEEDBOAT|INSENTIF)\b/;
+  var BIAYA_OPS_KATEGORI = ['Gaji & Honor', 'Sewa Kantor', 'Listrik, Air & Internet', 'Marketing & Iklan', 'Transport Kantor', 'Perlengkapan Kantor', 'Pajak & Perizinan', 'Lain-lain'];
 
   var PRESET_PALET = {
-    biru: { nama: 'Biru Trip', primary: '#1E6FEB', primaryDark: '#0B3C91', primarySoft: '#8EC5FF', bg: '#F3F7FC', surface: '#FFFFFF', accent: '#FFB547', text: '#0F1B33', muted: '#4A5B78' },
+    yb: { nama: 'YukBanyuwangi', primary: '#0076A8', primaryDark: '#0B3B5A', primarySoft: '#7CCBEA', bg: '#F3F6F8', surface: '#FFFFFF', accent: '#F2A23A', text: '#0E2230', muted: '#4A5D6B' },
     laut: { nama: 'Laut', primary: '#0E7490', primaryDark: '#164E63', primarySoft: '#67E8F9', bg: '#F1F8FA', surface: '#FFFFFF', accent: '#FFB547', text: '#0B2530', muted: '#3F5B66' },
-    langit: { nama: 'Langit', primary: '#0369A1', primaryDark: '#0C3A5E', primarySoft: '#7DD3FC', bg: '#F2F8FD', surface: '#FFFFFF', accent: '#F59E0B', text: '#0C1C2E', muted: '#46607A' },
+    ijen: { nama: 'Ijen', primary: '#1F5F8B', primaryDark: '#16263A', primarySoft: '#8FB8DE', bg: '#F4F6F9', surface: '#FFFFFF', accent: '#5FD3C6', text: '#101B2A', muted: '#4B5A6E' },
     senja: { nama: 'Senja', primary: '#C2410C', primaryDark: '#7C2D12', primarySoft: '#FDBA74', bg: '#FBF6F2', surface: '#FFFFFF', accent: '#0EA5E9', text: '#2A1608', muted: '#6B4C3B' }
   };
 
+  var SYARAT_DEFAULT = [
+    'Pembatalan dari pihak peserta dapat disampaikan pada pihak Tour Operator maksimal H-30 keberangkatan dan DP akan dikembalikan penuh (periode pengembalian antara 7 – 14 hari sejak pembatalan). Jika pembatalan dilakukan setelah H-30 DP dianggap hangus.',
+    'Pelunasan dapat dibayarkan maksimal pada tanggal {tglTrip}',
+    'Teknis kegiatan trip dapat menghubungi Tim Operasional a.n Riyan Budi : 0813-3387-1129'
+  ];
   var PENGATURAN_DEFAULT = {
-    APP_NAMA: ['YukX', 'Nama aplikasi (sidebar, tab, invoice, email)'],
-    APP_TAGLINE: ['Report Automation', 'Teks kecil di bawah nama aplikasi'],
-    APP_NAMA_PANJANG: ['Otomatisasi Sistem Laporan YukX', 'Nama lengkap untuk judul & email'],
-    LOGO_URL: ['', 'URL logo (Drive lh3) — kosong = logo bawaan'],
+    // Identitas & tampilan
+    APP_NAMA: ['YukBanyuwangi', 'Nama aplikasi (sidebar, tab, email)'],
+    APP_TAGLINE: ['Trip Operation & Report', 'Teks kecil di bawah nama aplikasi'],
+    APP_NAMA_PANJANG: ['Sistem Operasional & Laporan Trip YukBanyuwangi', 'Nama lengkap untuk judul & email'],
+    LOGO_URL: ['', 'URL logo — kosong = logo bawaan'],
     FAVICON_URL: ['', 'URL favicon — kosong = bawaan'],
-    PALET: [JSON.stringify({ preset: 'biru' }), 'JSON palet warna aktif'],
+    PALET: [JSON.stringify({ preset: 'yb' }), 'JSON palet warna aktif'],
     FONT_BODY: ['Plus Jakarta Sans', 'Font isi (Google Fonts)'],
     FONT_HEAD: ['Plus Jakarta Sans', 'Font judul (Google Fonts)'],
-    PT_NAMA: ['PT YukX Eksplor Nusantara', 'Nama badan usaha di invoice'],
-    PT_ALAMAT: ['Jl. Kemang Raya No. 18, Jakarta Selatan 12730', 'Alamat kantor'],
-    PT_EMAIL: ['halo@yukx.id', 'Email kantor'],
-    PT_TELP: ['+62 21-5088-2999', 'Telepon kantor'],
-    BANK_NAMA: ['Bank Central Asia (BCA)', 'Bank tujuan transfer'],
-    BANK_NOREK: ['8045-221-990', 'Nomor rekening'],
-    BANK_AN: ['PT YukX Eksplor Nusantara', 'Atas nama rekening'],
-    INVOICE_CATATAN: ['Mohon cantumkan nomor invoice pada berita transfer agar pembayaran tercatat otomatis.', 'Catatan di invoice'],
-    DP_PERSEN: ['50', 'Persentase DP default'],
-    JATUH_TEMPO_HARI: ['3', 'Jatuh tempo invoice DP/Full (hari setelah terbit)'],
-    PELUNASAN_H: ['14', 'Pelunasan paling lambat H-minus keberangkatan'],
-    TTD_NAMA: ['Sinta Wulandari', 'Nama penanda tangan invoice'],
-    TTD_JABATAN: ['Finance Manager', 'Jabatan penanda tangan'],
-    TTD_URL: ['', 'URL spesimen tanda tangan (opsional)'],
+    LOGIN_JUDUL: ['Setiap trip tercatat rapi, dari pesanan sampai margin.', 'Judul besar di halaman masuk'],
+    LOGIN_SUB: ['Data pemesanan, kalkulasi, manifest Tim Lapang, kalender, invoice, dan rekap — satu alur, langsung tersambung ke Google Sheets.', 'Kalimat pendukung di halaman masuk'],
+    LOGIN_FOTO: ['', 'Foto latar halaman masuk (URL) — kosong = ilustrasi bawaan'],
+    // Perusahaan (kop invoice & dokumen)
+    PT_NAMA: ['PT YUKBANYUWANGI TOUR ORGANIZER', 'Nama badan usaha'],
+    PT_MEREK: ['YUKBANYUWANGI', 'Nama merek (baris kedua kop)'],
+    PT_ALAMAT: ['Jl. Trenggono, Kel.Kebalenan, Brawijaya, Banyuwangi', 'Alamat kantor'],
+    PT_TELP: ['0333-2821229', 'Telepon kantor'],
+    PT_EMAIL: ['', 'Email kantor'],
+    PT_WEB: ['yukbanyuwangi.co.id', 'Website'],
+    PT_IG: ['@yukbanyuwangi', 'Instagram'],
+    PT_WA: ['08113787911', 'WhatsApp kantor'],
+    KOTA: ['Banyuwangi', 'Kota (tanda tangan dokumen)'],
+    // Invoice (model klien)
+    INV_JUDUL: ['INVOICE', 'Judul besar invoice'],
+    INV_WARNA: ['#0094C8', 'Warna pita & judul invoice'],
+    INV_HURUF: ['P', 'Huruf awal Customer ID (P/001/X/2026)'],
+    INV_REKENING: [JSON.stringify([{ bank: 'Mandiri', norek: '143.00.9959.954.8', logo: '' }, { bank: 'BCA', norek: '1808818123', logo: '' }]), 'JSON daftar rekening'],
+    INV_ATAS_NAMA: ['PT. YUKBANYUWANGI TOUR ORGANIZER', 'Atas nama rekening'],
+    INV_NOTE_JUDUL: ['Deposit LUNAS', 'Judul NOTE default'],
+    INV_NOTE_TEKS: ['Pelunasan dapat ditransfer ke rekening berikut:', 'Teks NOTE'],
+    INV_SYARAT: [JSON.stringify(SYARAT_DEFAULT), 'JSON syarat & ketentuan ({tglTrip} = tanggal hari pertama trip)'],
+    INV_TTD_URL: ['', 'Gambar tanda tangan (diunggah Admin)'],
+    INV_CAP_URL: ['', 'Gambar cap/stempel (diunggah Admin)'],
+    INV_TTD_LABEL: ['Finance', 'Label di bawah tanda tangan'],
+    INV_SISA_LABEL: ['SISA PEMBAYARAN', 'Label baris sisa pembayaran'],
+    INV_BARIS: ['15', 'Jumlah baris tabel (model: 15)'],
+    INV_QR: ['TIDAK', 'YA = tampilkan QR verifikasi kecil'],
+    // Manifest (PDF untuk Tim Lapang)
+    MNF_JUDUL: ['MANIFEST TRIP', 'Judul manifest'],
+    MNF_LOGO: ['TIDAK', 'YA = tampilkan logo & kop di manifest'],
+    MNF_LOGO_URL: ['', 'Logo khusus manifest — kosong = logo aplikasi'],
+    MNF_KOP: ['PT YUKBANYUWANGI TOUR ORGANIZER', 'Teks kop di samping logo manifest'],
+    MNF_L_TIM: ['DATA TIM', 'Judul bagian tim'],
+    MNF_L_TAMU: ['DATA TAMU', 'Judul bagian tamu'],
+    MNF_L_PESERTA: ['DAFTAR PESERTA', 'Judul daftar nama peserta'],
+    MNF_L_CEK: ['CHECK LIST TRIP', 'Judul checklist'],
+    MNF_L_CATATAN: ['CATATAN', 'Judul catatan'],
+    MNF_L_ITIN: ['ITINERARY', 'Judul itinerary'],
+    MNF_L_BUDGET: ['BUDGETING', 'Judul budgeting'],
+    MNF_KAKI: ['', 'Teks kaki manifest (opsional)'],
+    MNF_PIC_DEFAULT: ['', 'Nama PIC kantor default di manifest'],
+    MNF_CATATAN_DEFAULT: ['Setiap selesai trip perharinya memberikan update posisi kendaraan', 'Catatan default manifest (1 baris = 1 poin)'],
+    // Rekap
+    REKAP_LABEL: ['', 'JSON label kolom rekap (kosong = label template)'],
+    REKAP_TAB: ['Rekap {bulan} {tahun}', 'Nama tab rekap di Google Sheet'],
+    REKAP_SHEET_AKTIF: ['YA', 'YA = rekap ditulis otomatis ke Google Sheet Rekapitulasi'],
+    // Sumber data
+    SUMBER_SEMBUNYIKAN_ID: ['YA', 'YA = kolom ID SISTEM disembunyikan di sheet klien'],
+    SUMBER_TAB: ['', 'JSON pengaturan per tab (bagian rekap & jenis trip)'],
+    SUMBER_JEDA: ['4', 'Interval cek perubahan sheet (detik)'],
+    // Akses & tagihan
+    AKSES_MENU: [JSON.stringify({ report: ['Admin', 'Finance'], labarugi: ['Admin', 'Finance'], tagihan: ['Admin', 'Finance'] }), 'JSON peran yang boleh membuka menu'],
+    TAGIHAN_OTOMATIS: ['TIDAK', 'YA = pengingat sisa tagihan terkirim otomatis'],
+    TAGIHAN_H: ['7,3,1', 'Kirim pengingat H-berapa sebelum trip'],
+    // Lain
     APP_URL: ['', 'URL aplikasi (GitHub Pages) — untuk {link}'],
     VERIF_URL: ['', 'URL halaman verifikasi (verifikasi.html)'],
-    CAL_NAMA: ['YukX Trips', 'Nama kalender khusus'],
+    CAL_NAMA: ['YukBanyuwangi Trips', 'Nama kalender khusus'],
     NOTIF_WA_AKTIF: ['TIDAK', 'YA/TIDAK — saklar utama WhatsApp (Fonnte)'],
     NOTIF_EMAIL_AKTIF: ['TIDAK', 'YA/TIDAK — saklar utama Email'],
     NOTIF_MATRIKS: ['', 'JSON matriks event × kanal'],
@@ -106,42 +220,31 @@ var YX = (function () {
     WA_BATCH_DEFAULT: ['20', 'Ukuran batch blast (10/20/50)'],
     WA_JEDA_DETIK: ['5', 'Jeda antarpesan, boleh acak "3-8"'],
     WA_DETEKSI_OTOMATIS: ['YA', 'Cek otomatis nomor kontak baru terdaftar WA'],
-    EMAIL_NAMA_PENGIRIM: ['YukX Finance', 'Nama pengirim email'],
+    EMAIL_NAMA_PENGIRIM: ['YukBanyuwangi', 'Nama pengirim email'],
     CRM_SYNC_MENIT: ['30', 'Interval sinkron otomatis CRM']
   };
   // Kunci yang boleh diubah lewat menu Pengaturan (allowlist)
   var PENGATURAN_BOLEH = Object.keys(PENGATURAN_DEFAULT).filter(function (k) { return k.indexOf('NOTIF_') !== 0 && k.indexOf('WA_') !== 0 && k !== 'CRM_SYNC_MENIT' && k !== 'EMAIL_NAMA_PENGIRIM'; });
+  var MENU_DIATUR = { report: 'Report & Analitik', labarugi: 'Laba Rugi', tagihan: 'Tagihan' };
 
   // ==========================================================================
-  // 2. REGISTRY NOTIFIKASI (tanpa agen: pelanggan + tim internal)
+  // 2. REGISTRY NOTIFIKASI (pelanggan, Tim Lapang, tim internal)
   // ==========================================================================
   var NOTIF_EVENTS = {
-    BOOKING_DIBUAT: { label: 'Booking baru dicatat', target: 'Customer', wa: true, email: true, subjek: 'Booking {trip} Diterima',
-      pesan: 'Halo {nama} 👋\nBooking Anda untuk *{trip}* ({tglTrip}) sudah kami catat: *{pax} pax*, total *{total}*.\nInvoice akan segera kami kirim.\n\n— {perusahaan}' },
-    INVOICE_TERBIT: { label: 'Invoice terbit', target: 'Customer', wa: true, email: true, subjek: 'Invoice {noInvoice} — {trip}',
-      pesan: 'Halo {nama},\nInvoice *{noInvoice}* ({jenis}) untuk *{trip}* sebesar *{nominal}* sudah terbit, jatuh tempo *{jatuhTempo}*.\n\nTransfer ke: {rekening}\nPDF invoice: {link}\n\nTerima kasih 🙏\n— {perusahaan}' },
-    PEMBAYARAN_DITERIMA: { label: 'Pembayaran diterima (kuitansi)', target: 'Customer', wa: true, email: true, subjek: 'Pembayaran Diterima — {trip}',
-      pesan: 'Halo {nama},\nPembayaran *{nominal}* ({jenisBayar}) untuk *{trip}* sudah kami terima ✅\nTerbayar: {terbayar} · Sisa: *{sisa}*.\n\n— {perusahaan}' },
-    LUNAS: { label: 'Booking lunas', target: 'Customer', wa: true, email: true, subjek: 'Lunas! {trip}',
-      pesan: 'Selamat {nama}! 🎉\nPembayaran *{trip}* sudah *LUNAS*. Sampai jumpa di {meetingPoint} tanggal {tglTrip}.\n\n— {perusahaan}' },
-    PENGINGAT_JATUH_TEMPO: { label: 'Pengingat jatuh tempo invoice', target: 'Customer', wa: true, email: false, subjek: 'Pengingat Invoice {noInvoice}',
-      pesan: 'Halo {nama}, pengingat ramah 🙂\nInvoice *{noInvoice}* sebesar *{nominal}* jatuh tempo *{jatuhTempo}*.\nTransfer ke: {rekening}\n\n— {perusahaan}' },
-    PENGINGAT_BERANGKAT: { label: 'Pengingat H-3 keberangkatan', target: 'Customer', wa: true, email: true, subjek: 'H-3 {trip}',
-      pesan: 'Halo {nama} ✈️\n3 hari lagi kita berangkat ke *{trip}* ({tglTrip}).\nMeeting point: *{meetingPoint}*. Siapkan KTP/paspor & obat pribadi ya.\n\n— {perusahaan}' },
-    MANIFEST_FINAL: { label: 'Manifest final', target: 'Customer', wa: true, email: false, subjek: 'Manifest {trip} Final',
-      pesan: 'Halo {nama},\nData rombongan Anda untuk *{trip}* sudah *final* ({pax} pax). Meeting point: {meetingPoint}.\n\n— {perusahaan}' },
-    TIM_PEMBAYARAN_MASUK: { label: 'Tim: pembayaran masuk', target: 'Finance', wa: true, email: false, subjek: 'Pembayaran masuk {customer}',
-      pesan: '💰 Pembayaran masuk\n{customer} — {trip}\n{jenisBayar} {nominal} via {metode}\nSisa tagihan: {sisa}\nDicatat oleh {oleh}' },
-    TIM_BUDGET_MENUNGGU: { label: 'Tim: revisi budget perlu persetujuan', target: 'Finance', wa: true, email: true, subjek: 'Budget {trip} v{versi} menunggu persetujuan',
-      pesan: '📋 Budget *{trip}* versi {versi} ({total}) diajukan oleh {oleh} dan menunggu persetujuan Finance.\nAlasan: {alasan}' },
-    TIM_BUDGET_DIPUTUSKAN: { label: 'Tim: keputusan budget', target: 'Admin', wa: true, email: false, subjek: 'Budget {trip} v{versi} {keputusan}',
-      pesan: '📋 Budget *{trip}* versi {versi} *{keputusan}* oleh {oleh}.\n{catatan}' },
-    TIM_REALISASI_DIAJUKAN: { label: 'Tim: laporan realisasi perlu diaudit', target: 'Finance', wa: true, email: true, subjek: 'Realisasi {trip} menunggu audit',
-      pesan: '🧾 Laporan realisasi *{trip}* dilaporkan oleh {oleh}.\nRAB: {rab} · Realisasi: *{realisasi}*{lebih}\n{penjelasan}\nSilakan audit di menu Rekapitulasi.' },
-    TIM_REALISASI_DIPUTUSKAN: { label: 'Tim: hasil audit realisasi', target: 'Admin', wa: true, email: false, subjek: 'Realisasi {trip} {keputusan}',
-      pesan: '🧾 Laporan realisasi *{trip}* *{keputusan}* oleh {oleh}.\n{catatan}' },
-    TIM_INVOICE_TERBIT: { label: 'Tim: invoice baru terbit', target: 'Finance', wa: false, email: false, subjek: 'Invoice {noInvoice} terbit',
-      pesan: '🧾 Invoice {noInvoice} ({jenis}) {nominal} untuk {customer} — {trip} diterbitkan oleh {oleh}.' }
+    INVOICE_TERBIT: { label: 'Invoice terbit', target: 'Tamu', wa: true, email: true, subjek: 'Invoice {noInvoice} — {trip}',
+      pesan: 'Halo {nama},\nInvoice *{noInvoice}* untuk *{trip}* ({tglTrip}) sudah terbit.\nTotal: *{total}* · Sisa pembayaran: *{sisa}*\n\nPDF invoice: {link}\n\nTerima kasih 🙏\n— {perusahaan}' },
+    PENGINGAT_TAGIHAN: { label: 'Pengingat sisa tagihan', target: 'Tamu', wa: true, email: true, subjek: 'Pengingat pelunasan {trip}',
+      pesan: 'Halo {nama}, pengingat ramah 🙂\nSisa pembayaran untuk *{trip}* ({tglTrip}) sebesar *{sisa}*.\nPelunasan paling lambat *{jatuhTempo}*.\n\nTransfer ke: {rekening}\n\n— {perusahaan}' },
+    PEMBAYARAN_DITERIMA: { label: 'Pembayaran diterima', target: 'Tamu', wa: true, email: true, subjek: 'Pembayaran diterima — {trip}',
+      pesan: 'Halo {nama},\nPembayaran *{nominal}* untuk *{trip}* sudah kami terima ✅\nSisa: *{sisa}*.\n\n— {perusahaan}' },
+    LUNAS: { label: 'Pembayaran lunas', target: 'Tamu', wa: true, email: true, subjek: 'Lunas! {trip}',
+      pesan: 'Terima kasih {nama}! 🎉\nPembayaran *{trip}* ({tglTrip}) sudah *LUNAS*. Sampai jumpa di Banyuwangi.\n\n— {perusahaan}' },
+    TL_MANIFEST: { label: 'Manifest dikirim ke Tim Lapang', target: 'Tim Lapang', wa: true, email: true, subjek: 'Manifest {tamu} — {tglTrip}',
+      pesan: 'Halo {nama},\nAnda bertugas untuk *{tamu}* — {trip} ({tglTrip}), {pax} pax.\nManifest: {link}\nUndangan Google Calendar sudah dikirim ke email Anda.\n\n— {perusahaan}' },
+    TIM_REKAP_SIAP: { label: 'Tim: rekap siap dicek Finance', target: 'Finance', wa: true, email: true, subjek: 'Rekap {tamu} siap dicek',
+      pesan: '🧾 Rekap *{tamu}* — {trip} ({tglTrip}) ditandai siap dicek oleh {oleh}.\nPenjualan {penjualan} · Pengeluaran {pengeluaran} · Margin {margin}{lebih}\nSilakan cek & kunci margin di menu Rekapitulasi.' },
+    TIM_REKAP_DIKUNCI: { label: 'Tim: margin dikunci / dibuka', target: 'Admin', wa: true, email: false, subjek: 'Rekap {tamu} {keputusan}',
+      pesan: '🔒 Rekap *{tamu}* — {trip} *{keputusan}* oleh {oleh}.\n{catatan}' }
   };
 
   // ==========================================================================
@@ -167,20 +270,26 @@ var YX = (function () {
     var m2 = s.match(/^(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{4})$/); if (m2) return m2[3] + '-' + pad(m2[2], 2) + '-' + pad(m2[1], 2);
     return s;
   }
+  function tglValid(t) { return /^\d{4}-\d{2}-\d{2}$/.test(t); }
   function tambahHari(t, n) { var d = new Date(tgl(t) + 'T00:00:00Z'); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); }
   function selisihHari(a, b) { return Math.round((new Date(tgl(b) + 'T00:00:00Z') - new Date(tgl(a) + 'T00:00:00Z')) / 864e5); } // b - a
   var BULAN = ['Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni', 'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember'];
   var BLN = ['Jan', 'Feb', 'Mar', 'Apr', 'Mei', 'Jun', 'Jul', 'Agu', 'Sep', 'Okt', 'Nov', 'Des'];
   var ROMAWI = ['I', 'II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII', 'IX', 'X', 'XI', 'XII'];
-  function tglId(t) { t = tgl(t); if (!/^\d{4}-\d{2}-\d{2}$/.test(t)) return t || '-'; return Number(t.slice(8, 10)) + ' ' + BLN[Number(t.slice(5, 7)) - 1] + ' ' + t.slice(0, 4); }
-  function tglPanjang(t) { t = tgl(t); if (!/^\d{4}-\d{2}-\d{2}$/.test(t)) return t || '-'; return Number(t.slice(8, 10)) + ' ' + BULAN[Number(t.slice(5, 7)) - 1] + ' ' + t.slice(0, 4); }
+  var HARI_KE = ['Pertama', 'Kedua', 'Ketiga', 'Keempat', 'Kelima', 'Keenam', 'Ketujuh', 'Kedelapan', 'Kesembilan', 'Kesepuluh'];
+  function tglId(t) { t = tgl(t); if (!tglValid(t)) return t || '-'; return Number(t.slice(8, 10)) + ' ' + BLN[Number(t.slice(5, 7)) - 1] + ' ' + t.slice(0, 4); }
+  function tglPanjang(t) { t = tgl(t); if (!tglValid(t)) return t || '-'; return Number(t.slice(8, 10)) + ' ' + BULAN[Number(t.slice(5, 7)) - 1] + ' ' + t.slice(0, 4); }
+  function tglDuaDigit(t) { t = tgl(t); if (!tglValid(t)) return t || '-'; return t.slice(8, 10) + ' ' + BULAN[Number(t.slice(5, 7)) - 1] + ' ' + t.slice(0, 4); }
+  function tglSlash(t) { t = tgl(t); if (!tglValid(t)) return t || ''; return t.slice(8, 10) + '/' + t.slice(5, 7) + '/' + t.slice(0, 4); }
   function rentangTgl(a, b) {
     a = tgl(a); b = tgl(b); if (!a) return '-'; if (!b || a === b) return tglId(a);
     if (a.slice(0, 7) === b.slice(0, 7)) return Number(a.slice(8, 10)) + '–' + tglId(b);
     if (a.slice(0, 4) === b.slice(0, 4)) return Number(a.slice(8, 10)) + ' ' + BLN[Number(a.slice(5, 7)) - 1] + ' – ' + tglId(b);
     return tglId(a) + ' – ' + tglId(b);
   }
+  function labelBulan(ym) { return ym && /^\d{4}-\d{2}$/.test(ym) ? BULAN[Number(ym.slice(5, 7)) - 1] + ' ' + ym.slice(0, 4) : ym || '-'; }
   function rp(n) { n = bulat(n); var s = String(Math.abs(n)).replace(/\B(?=(\d{3})+(?!\d))/g, '.'); return (n < 0 ? '-Rp ' : 'Rp ') + s; }
+  function ribuan(n) { n = bulat(n); return (n < 0 ? '-' : '') + String(Math.abs(n)).replace(/\B(?=(\d{3})+(?!\d))/g, '.'); }
   function rpRingkas(n) {
     n = num(n); var a = Math.abs(n), sgn = n < 0 ? '-' : '';
     if (a >= 1e9) return sgn + 'Rp ' + (a / 1e9).toFixed(a >= 1e10 ? 0 : 1).replace('.', ',') + ' M';
@@ -205,7 +314,7 @@ var YX = (function () {
     if (!s) return ''; if (s.indexOf('62') === 0) s = '0' + s.substring(2); else if (s.indexOf('8') === 0) s = '0' + s; return s;
   }
   function hp62(v) { var s = hp08(v); return s ? (s[0] === '0' ? '62' + s.substring(1) : s) : ''; }
-  function hpValid(v) { return /^08\d{8,12}$/.test(hp08(v)); }
+  function hpValid(v) { return /^08\d{7,12}$/.test(hp08(v)); }
   function emailValid(e) { return /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(String(e || '').trim()); }
   function isiTemplate(tpl, v) { return String(tpl || '').replace(/\{(\w+)\}/g, function (m, k) { return v[k] == null ? '' : String(v[k]); }); }
   function inisial(nama) { return str(nama).replace(/^(PT|CV|Dr|dr|Ir|H|Hj)\.?\s+/i, '').split(/\s+/).filter(Boolean).slice(0, 2).map(function (w) { return w[0]; }).join('').toUpperCase() || '?'; }
@@ -214,8 +323,18 @@ var YX = (function () {
   function jumlah(arr, f) { var s = 0; for (var i = 0; i < arr.length; i++) s += num(f ? f(arr[i]) : arr[i]); return s; }
   function kelompok(arr, k) { var o = {}; arr.forEach(function (r) { var key = typeof k === 'function' ? k(r) : r[k]; (o[key] = o[key] || []).push(r); }); return o; }
   function peta(arr, k) { var o = {}; arr.forEach(function (r) { o[r[k]] = r; }); return o; }
-  function kunciItem(r) { return (str(r.Kategori) + '|' + str(r.Uraian)).toLowerCase(); }
-  function parseJson(s, d) { try { return s ? JSON.parse(s) : d; } catch (e) { return d; } }
+  function parseJson(s, d) { try { return s ? (typeof s === 'string' ? JSON.parse(s) : s) : d; } catch (e) { return d; } }
+  function judulKata(s) { return str(s).toLowerCase().replace(/(^|[\s\-\/(])([a-z])/g, function (m, a, b) { return a + b.toUpperCase(); }); }
+  function kotaNormal(s) {
+    s = str(s).replace(/\s+/g, ' '); if (!s || s === '-') return '';
+    s = s.replace(/^(kab\.?|kabupaten)\s+/i, 'Kab. ').replace(/^(kota)\s+/i, '');
+    return judulKata(s).replace(/^Kab\. /, 'Kab. ');
+  }
+  function hashTeks(s) { // FNV-1a 32 bit → base36 (sidik jari baris, bukan keamanan)
+    var h = 0x811c9dc5; s = String(s);
+    for (var i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = (h + ((h << 1) + (h << 4) + (h << 7) + (h << 8) + (h << 24))) >>> 0; }
+    return h.toString(36);
+  }
 
   // Kontras WCAG
   function luminans(hex) {
@@ -238,11 +357,11 @@ var YX = (function () {
     return { lulus: masalah.length === 0, masalah: masalah, rasio: hasil };
   }
   function paletAktif(S) {
-    var p = parseJson(S.PALET, { preset: 'biru' }) || { preset: 'biru' };
-    var dasar = PRESET_PALET[p.preset] || PRESET_PALET.biru;
+    var p = parseJson(S.PALET, { preset: 'yb' }) || { preset: 'yb' };
+    var dasar = PRESET_PALET[p.preset] || PRESET_PALET.yb;
     var out = {}; Object.keys(dasar).forEach(function (k) { out[k] = (p.preset === 'kustom' && p[k]) ? p[k] : dasar[k]; });
     if (p.preset === 'kustom') Object.keys(p).forEach(function (k) { if (/^#/.test(p[k])) out[k] = p[k]; });
-    out.preset = p.preset || 'biru'; return out;
+    out.preset = p.preset || 'yb'; return out;
   }
 
   // ==========================================================================
@@ -260,6 +379,15 @@ var YX = (function () {
   Tx.prototype._track = function (t, row) { var k = SKEMA[t].key; (this.ch[t] = this.ch[t] || {})[row[k]] = row; };
   Tx.prototype.nextId = function (t) {
     var s = SKEMA[t], pre = s.prefix + '-';
+    if (s.pendek) {                                             // ID ringkas acak (dipakai di sheet klien): PSN-K7Q2MX
+      var abc = '23456789ABCDEFGHJKLMNPQRSTUVWXYZ', id;
+      for (var coba = 0; coba < 20; coba++) {
+        var u = String(this.H.uuid()).replace(/[^0-9a-f]/gi, ''), x = '';
+        for (var i = 0; i < 6; i++) x += abc[parseInt(u.substr(i * 2, 2), 16) % abc.length];
+        id = pre + x; if (!this.get(t, id)) return id;
+      }
+      return id;
+    }
     if (s.acak) { this._seq = (this._seq || 0) + 1; var w = this.H.now ? this.H.now().getTime() : Date.now(); return pre + w.toString(36).toUpperCase() + pad((this._seq).toString(36).toUpperCase(), 2) + String(this.H.uuid()).replace(/[^a-z0-9]/gi, '').slice(0, 3).toUpperCase(); }
     if (this._hw[t] === undefined) {
       var mx = 0, re = new RegExp('^' + s.prefix + '-(\\d+)$');
@@ -273,7 +401,7 @@ var YX = (function () {
     s.cols.forEach(function (c) {
       var v = obj[c] !== undefined ? obj[c] : (lama ? lama[c] : undefined);
       if (v === undefined || v === null) v = ANGKA[c] ? 0 : '';
-      if (ANGKA[c]) v = num(v); else if (typeof v !== 'string') v = String(v);
+      if (ANGKA[c]) v = num(v); else if (typeof v !== 'string') v = typeof v === 'object' ? JSON.stringify(v) : String(v);
       row[c] = v;
     });
     return row;
@@ -290,7 +418,7 @@ var YX = (function () {
     Object.keys(patch || {}).forEach(function (k) {
       if (s.cols.indexOf(k) < 0 || k === s.key) return;
       var v = patch[k]; if (v === undefined || v === null) v = ANGKA[k] ? 0 : '';
-      v = ANGKA[k] ? num(v) : String(v);
+      v = ANGKA[k] ? num(v) : (typeof v === 'object' ? JSON.stringify(v) : String(v));
       if (v !== cur[k]) { p[k] = v; beda = true; }
     });
     if (!beda) return cur;
@@ -312,6 +440,8 @@ var YX = (function () {
   };
   Tx.prototype.job = function (jenis, ref, payload, setelah) {
     var p = payload || {}; if (setelah && setelah.length) p.setelah = setelah;
+    // Tugas sejenis untuk objek yang sama & masih antre → cukup satu (debounce)
+    if (!p.setelah) { var ada = this.where('Antrean_Tugas', function (r) { return r.Jenis === jenis && r.Ref === ref && r.Status === 'Antri'; })[0]; if (ada) return ada.ID_Tugas; }
     var r = this.insert('Antrean_Tugas', { Jenis: jenis, Ref: ref, Payload: JSON.stringify(p), Status: 'Antri', Percobaan: 0, Hasil: '', Dibuat: this.now() });
     this.jobs.push(r.ID_Tugas); return r.ID_Tugas;
   };
@@ -327,854 +457,804 @@ var YX = (function () {
   // ==========================================================================
   // 5. HITUNGAN MURNI (dipakai server & tampilan) — input D = {Tabel: [..]}
   // ==========================================================================
-  function indeks(D) {
-    var ix = { trip: peta(D.Trip, 'ID_Trip'), cust: peta(D.Customer, 'ID_Customer'), pj: peta(D.Penjualan, 'ID_Penjualan') };
-    ix.pjPerTrip = kelompok(D.Penjualan, 'ID_Trip');
-    ix.bayarPerPj = kelompok(D.Pembayaran, 'ID_Penjualan');
-    ix.invPerPj = kelompok(D.Invoice, 'ID_Penjualan');
-    ix.angPerPj = kelompok(D.Anggota_Rombongan, 'ID_Penjualan');
-    ix.pesertaPerPj = peta(D.Peserta_Trip, 'ID_Penjualan');
-    ix.bgtPerTrip = kelompok(D.Budget_Header, 'ID_Trip');
-    ix.itemPerBgt = kelompok(D.Budget_Item, 'ID_Budget');
-    ix.rlsPerTrip = kelompok(D.Realisasi_Biaya, 'ID_Trip');
-    ix.mnfPerPj = {}; ix.mnfTrip = {};
-    D.Manifest.forEach(function (m) { if (m.Tipe === 'Per Trip') ix.mnfTrip[m.ID_Trip] = m; else ix.mnfPerPj[m.ID_Penjualan] = m; });
-    ix.rekap = peta(D.Rekap_Operasional, 'ID_Trip');
-    return ix;
-  }
-  function statusTrip(t, today) {
-    if (!t) return '-'; if (t.Status === 'Batal' || t.Status === 'Draft') return t.Status;
-    if (t.Tgl_Pulang && today > t.Tgl_Pulang) return 'Selesai';
-    if (t.Tgl_Berangkat && today >= t.Tgl_Berangkat) return 'Berjalan';
-    return 'Open';
-  }
-  function budgetAktif(ix, idTrip) {
-    var hs = ix.bgtPerTrip[idTrip] || [], a = null;
-    hs.forEach(function (h) { if (h.Status === 'Aktif' && (!a || num(h.Versi) > num(a.Versi))) a = h; });
-    return a;
-  }
-  function budgetTerbaru(ix, idTrip) { var hs = ix.bgtPerTrip[idTrip] || [], a = null; hs.forEach(function (h) { if (!a || num(h.Versi) > num(a.Versi)) a = h; }); return a; }
-  function terbayarPj(ix, id) { return jumlah((ix.bayarPerPj[id] || []).filter(function (b) { return b.Status_Verifikasi === 'Terverifikasi'; }), function (b) { return b.Nominal; }); }
-
-  function ringkasPj(D, ix, pj, today, S) {
-    var trip = ix.trip[pj.ID_Trip] || {}, cust = ix.cust[pj.ID_Customer] || {};
-    var bayar = terbayarPj(ix, pj.ID_Penjualan), total = num(pj.Total), sisa = Math.max(0, total - bayar);
-    var invs = urutkan((ix.invPerPj[pj.ID_Penjualan] || []).filter(function (i) { return i.Status !== 'Batal'; }), function (i) { return i.Tgl_Terbit + i.No_Invoice; });
-    var hari = trip.Tgl_Berangkat ? selisihHari(today, trip.Tgl_Berangkat) : 999;
-    var pelH = num((S || {}).PELUNASAN_H || 14);
-    var invPelunasanBuka = invs.some(function (i) { return i.Jenis === 'Pelunasan' && i.Status !== 'Lunas'; });
-    var tahap;
-    if (pj.Status === 'Batal') tahap = 'batal';
-    else if (bayar <= 0) tahap = 'booking';
-    else if (bayar >= total) tahap = 'lunas';
-    else if (invPelunasanBuka || hari <= pelH) tahap = 'pelunasan';
-    else tahap = 'dp';
-    var ang = ix.angPerPj[pj.ID_Penjualan] || [];
-    var lengkap = ang.filter(function (a) { return str(a.Nama) && str(a.Identitas); }).length;
-    var inv = invs.length ? invs[invs.length - 1] : null;
-    var invTerbuka = invs.filter(function (i) { return i.Status !== 'Lunas'; });
-    var jt = invTerbuka.length ? invTerbuka[0].Jatuh_Tempo : (pj.Jatuh_Tempo || '');
+  function aturTab(S) { return parseJson(S && S.SUMBER_TAB, {}) || {}; }
+  /** Bagian rekap (YB/SB) & jenis trip (Private/Open Trip) per tab — bisa diatur Admin. */
+  function infoTab(S, nama) {
+    var m = aturTab(S)[nama] || {}, N = normalHeader(nama);
     return {
-      id: pj.ID_Penjualan, pj: pj, trip: trip, cust: cust, total: total, bayar: bayar, sisa: sisa, persen: total ? Math.min(100, Math.round(bayar / total * 100)) : 0,
-      tahap: tahap, hari: hari, invoices: invs, invTerakhir: inv, invTerbuka: invTerbuka, jatuhTempo: jt,
-      telat: !!(jt && sisa > 0 && jt < today && pj.Status !== 'Batal'),
-      peserta: ix.pesertaPerPj[pj.ID_Penjualan] || null, review: pj.Review_Peserta === 'YA',
-      anggota: ang.length, anggotaLengkap: lengkap, manifest: ix.mnfPerPj[pj.ID_Penjualan] || null
+      bagian: m.bagian === 'SB' || m.bagian === 'YB' ? m.bagian : (/(^|\s)SB(\s|$)|SUNRISE|BOAT/.test(N) ? 'SB' : 'YB'),
+      jenis: m.jenis === 'Private' || m.jenis === 'Open Trip' ? m.jenis : (/PRIVATE|(^|\s)PT(\s|$)/.test(N) ? 'Private' : 'Open Trip'),
+      aktif: m.aktif !== false
+    };
+  }
+  function durasi(p) {
+    var m = String(p.Trip || '').toUpperCase().match(/(\d+)\s*D\s*(\d+)\s*N/), hari = 0, label = '';
+    if (m) { hari = Number(m[1]); label = m[1] + 'D' + m[2] + 'N'; }
+    var a = tgl(p.Tgl_Mulai), b = tgl(p.Tgl_Selesai);
+    if (!hari && tglValid(a) && tglValid(b) && b >= a) { var h = selisihHari(a, b) + 1; hari = h; label = h > 1 ? h + 'D' + (h - 1) + 'N' : '1 Hari'; }
+    if (!hari) { hari = 1; label = '1 Hari'; }
+    return { hari: hari, label: label };
+  }
+  function kodeTripDefault(p, a, b) { return [str(p.Nama), str(p.Trip)].filter(Boolean).join(' ') + (a ? ' tanggal ' + tglDuaDigit(a) + (b && b !== a ? ' - ' + tglDuaDigit(b) : '') : ''); }
+  /** Ringkasan satu baris pesanan (nilai turunan untuk tampilan & laporan). */
+  function infoPesanan(p, S) {
+    var t = infoTab(S, p.Tab), du = durasi(p), mulai = tgl(p.Tgl_Mulai);
+    var sel = tgl(p.Tgl_Selesai); if (!tglValid(sel) || sel < mulai) sel = tglValid(mulai) ? tambahHari(mulai, du.hari - 1) : '';
+    var pax = num(p.Pax), harga = num(p.Harga), total = num(p.Total) || pax * harga;
+    return { id: p.ID_Pesanan, tab: p.Tab, bagian: t.bagian, jenis: t.jenis, durasi: du.label, hari: du.hari, mulai: tglValid(mulai) ? mulai : '', selesai: sel,
+      pax: pax, harga: harga, total: total, dp: num(p.DP), bulan: tglValid(mulai) ? mulai.slice(0, 7) : '', tglPesan: tglValid(tgl(p.Tgl_Pesan)) ? tgl(p.Tgl_Pesan) : '',
+      kode: kodeTripDefault(p, mulai, sel), jadwal: rentangTgl(mulai, sel), hp: hp08(p.No_HP), email: emailValid(p.Email) ? str(p.Email).toLowerCase() : '' };
+  }
+  function statusTrip(inf, today) {
+    if (!inf.mulai) return 'Tanpa Tanggal';
+    if (today > inf.selesai) return 'Selesai';
+    if (today >= inf.mulai) return 'Berjalan';
+    return 'Akan Datang';
+  }
+
+  function indeks(D) {
+    return {
+      psn: peta(D.Pesanan || [], 'ID_Pesanan'), tab: peta(D.Sumber_Tab || [], 'Nama'), kal: peta(D.Kalkulasi || [], 'ID_Pesanan'), itemPer: kelompok(D.Kalkulasi_Item || [], 'ID_Pesanan'),
+      mnf: peta(D.Manifest || [], 'ID_Pesanan'), rek: peta(D.Rekap || [], 'ID_Pesanan'), byrPer: kelompok(D.Pembayaran || [], 'ID_Pesanan'), tag: peta(D.Tagihan || [], 'ID_Pesanan'),
+      invPer: kelompok(D.Invoice || [], 'ID_Pesanan'), evt: peta(D.Kalender_Event || [], 'ID_Pesanan'), tl: peta(D.Tim_Lapang || [], 'ID_TL'),
+      peta: peta(D.Peta_Item || [], 'Kunci')
     };
   }
 
-  // Status laporan realisasi per trip (alur: Admin catat → lapor → Finance audit → Final)
-  var RLS = { BELUM: 'Belum Ada Realisasi', DRAFT: 'Draft', DIAJUKAN: 'Diajukan', PERBAIKAN: 'Perlu Perbaikan', DITOLAK: 'Ditolak', FINAL: 'Final' };
-  var RLS_EDIT = [RLS.BELUM, RLS.DRAFT, RLS.PERBAIKAN, RLS.DITOLAK];
-  function normRls(s) {
-    s = str(s); if (!s) return '';
-    if (s === 'Terverifikasi') return RLS.FINAL;
-    if (s === 'Menunggu Audit') return RLS.DIAJUKAN;
-    if (s === 'Perlu Revisi' || s === 'Perlu Audit Ulang') return RLS.PERBAIKAN;
-    return s;
+  // ---------- Kalkulasi ----------
+  function kolomValid(bagian, k) { return REKAP_KOLOM[bagian].some(function (x) { return x[0] === k; }) ? k : ''; }
+  function kolomCadangan(bagian) { return bagian === 'SB' ? 'LAIN' : 'LL'; }
+  function tebakKolom(bagian, uraian, grup) {
+    var U = normalHeader(uraian), daftar = KATA_KOLOM[bagian] || KATA_KOLOM.YB;
+    if (bagian === 'YB' && grup) {                                   // item manifest → kolom mengikuti grup (sesuai catatan template rekap)
+      var g = { 'MAN POWER': 'TLGUIDE', 'KONSUMSI': 'KONSUM', 'KARCIS': 'KARCIS', 'AGEN/LAIN-LAIN': 'LL', 'SERVICE': 'SERVICE' }[grup];
+      if (g) return g;
+    }
+    for (var i = 0; i < daftar.length; i++) if (daftar[i][0].test(U)) return daftar[i][1];
+    if (bagian === 'YB' && /\b(DJAWATAN|IJEN|BALURAN|GWD|PULAU MERAH|GREEN ISLAND|KARCIS|TIKET|TIKET MASUK|RETRIBUSI|WISATA)\b/.test(U)) return 'KARCIS';
+    return kolomCadangan(bagian);
   }
-  /** RAB (versi aktif) vs realisasi per kategori — tanda kategori yang melebihi RAB. */
-  function rabVsRealisasi(ix, idTrip) {
-    var ba = budgetAktif(ix, idTrip), bud = {}, rls = {}, out = [];
-    if (ba) (ix.itemPerBgt[ba.ID_Budget] || []).forEach(function (i) { bud[i.Kategori] = (bud[i.Kategori] || 0) + num(i.Subtotal); });
-    (ix.rlsPerTrip[idTrip] || []).filter(function (r) { return r.Status !== 'Ditolak'; }).forEach(function (r) { rls[r.Kategori] = (rls[r.Kategori] || 0) + num(r.Nominal); });
-    Object.keys(Object.assign({}, bud, rls)).forEach(function (k) { var b = bud[k] || 0, r = rls[k] || 0; out.push({ kategori: k, rab: b, realisasi: r, selisih: b - r, over: r > b, persen: b ? Math.round(r / b * 100) : (r ? 999 : 0), diLuarRab: !b && r > 0 }); });
+  function tebakGrup(uraian) { var U = normalHeader(uraian); for (var i = 0; i < KATA_GRUP.length; i++) if (KATA_GRUP[i][0].test(U)) return KATA_GRUP[i][1]; return 'KARCIS'; }
+  function kunciPeta(bagian, uraian) { return bagian + '|' + normalHeader(uraian); }
+  /** Saran pemetaan item (diingat per nama item; kalau belum pernah → tebakan kata kunci). */
+  function saranItem(ix, bagian, uraian) {
+    var m = ix.peta[kunciPeta(bagian, uraian)];
+    if (m) return { Ke_TL: m.Ke_TL === 'YA' ? 'YA' : 'TIDAK', Grup: m.Grup || '', Kolom: kolomValid(bagian, m.Kolom) || tebakKolom(bagian, uraian, m.Grup), diingat: true };
+    var keTL = BUKAN_TL.test(normalHeader(uraian)) ? 'TIDAK' : 'YA', grup = keTL === 'YA' ? tebakGrup(uraian) : '';
+    return { Ke_TL: keTL, Grup: grup, Kolom: tebakKolom(bagian, uraian, grup), diingat: false };
+  }
+  function ringkasKalkulasi(ix, id) {
+    var items = urutkan(ix.itemPer[id] || [], function (i) { return num(i.Urutan); });
+    var tl = items.filter(function (i) { return i.Ke_TL === 'YA'; }), non = items.filter(function (i) { return i.Ke_TL !== 'YA'; });
+    var k = ix.kal[id] || null;
+    return { ada: !!k, k: k, items: items, tl: tl, non: non, pax: k ? num(k.Pax) : 0,
+      total: jumlah(items, function (i) { return i.Budget; }), totalTL: jumlah(tl, function (i) { return i.Budget; }), terimaTL: jumlah(tl, function (i) { return i.Terima_TL; }), totalNon: jumlah(non, function (i) { return i.Budget; }) };
+  }
+
+  // ---------- Rekapitulasi ----------
+  function labelRekap(S) {
+    var simpan = parseJson(S && S.REKAP_LABEL, {}) || {}, out = {};
+    ['YB', 'SB'].forEach(function (b) {
+      var s = simpan[b] || {}, L = {};
+      Object.keys(REKAP_LABEL_DEFAULT[b]).forEach(function (k) { L[k] = s[k] != null && str(s[k]) !== '' ? str(s[k]) : REKAP_LABEL_DEFAULT[b][k]; });
+      REKAP_KOLOM[b].forEach(function (k) { L[k[0]] = s[k[0]] != null && str(s[k[0]]) !== '' ? str(s[k[0]]) : k[1]; });
+      out[b] = { L: L, kolom: REKAP_KOLOM[b].map(function (k) { return { k: k[0], l: L[k[0]] }; }) };
+    });
     return out;
   }
-  function rekapTrip(D, ix, trip, today) {
-    var pjs = (ix.pjPerTrip[trip.ID_Trip] || []).filter(function (p) { return p.Status !== 'Batal'; });
-    var pendapatan = jumlah(pjs, function (p) { return p.Total; });
-    var kas = jumlah(pjs, function (p) { return terbayarPj(ix, p.ID_Penjualan); });
-    var pax = jumlah(pjs, function (p) { return p.Jumlah_Pax; });
-    var ba = budgetAktif(ix, trip.ID_Trip), bDraft = false, bAktif = !!ba;
-    if (!ba) { ba = budgetTerbaru(ix, trip.ID_Trip); bDraft = !!ba; }   // belum ada versi aktif → pakai versi terbaru sebagai estimasi
-    var bTot = ba ? num(ba.Total) : 0;
-    var semuaRls = ix.rlsPerTrip[trip.ID_Trip] || [], rls = semuaRls.filter(function (r) { return r.Status !== 'Ditolak'; });
-    var realisasi = jumlah(rls, function (r) { return r.Nominal; });
-    var rk = ix.rekap[trip.ID_Trip] || {};
-    var stA = normRls(rk.Status_Audit); if (!stA || stA === RLS.BELUM || stA === RLS.DRAFT) stA = realisasi > 0 ? RLS.DRAFT : RLS.BELUM;
-    var final = stA === RLS.FINAL, selesai = !!(trip.Tgl_Pulang && today >= trip.Tgl_Pulang);
-    var biaya = final ? (num(rk.Biaya_Final) || realisasi) : (realisasi > 0 ? realisasi : bTot);
-    var laba = pendapatan - biaya;
-    var over = bAktif && realisasi > bTot, lebih = over ? realisasi - bTot : 0;
-    var bisaEdit = RLS_EDIT.indexOf(stA) > -1 && bAktif;
-    return {
-      ID_Trip: trip.ID_Trip, trip: trip, status: statusTrip(trip, today), pax: pax, booking: pjs.length,
-      pendapatan: pendapatan, kasMasuk: kas, piutang: pendapatan - kas,
-      budget: bTot, versiBudget: ba ? num(ba.Versi) : 0, budgetId: ba ? ba.ID_Budget : '', budgetStatus: ba ? ba.Status : '', budgetDraft: bDraft, budgetAktif: bAktif,
-      realisasi: realisasi, adaRealisasi: realisasi > 0, nota: semuaRls.length, notaDitolak: semuaRls.length - rls.length, selisih: realisasi > 0 ? bTot - realisasi : 0,
-      selisihPersen: realisasi > 0 && bTot ? Math.round((bTot - realisasi) / bTot * 1000) / 10 : 0,
-      biaya: biaya, laba: laba, margin: pendapatan ? Math.round(laba / pendapatan * 1000) / 10 : 0,
-      estimasiLaba: pendapatan - bTot, estimasiMargin: pendapatan ? Math.round((pendapatan - bTot) / pendapatan * 1000) / 10 : 0,
-      // alur realisasi & tanda risiko
-      statusAudit: stA, final: final, tripSelesai: selesai, bisaEdit: bisaEdit,
-      bisaLapor: bisaEdit && realisasi > 0 && selesai && stA !== RLS.BELUM,
-      perluLapor: bAktif && selesai && RLS_EDIT.indexOf(stA) > -1 && trip.Status !== 'Batal',
-      overBudget: over, lebih: lebih, lebihPersen: over && bTot ? Math.round(lebih / bTot * 1000) / 10 : 0, rugi: laba < 0 && (final || realisasi > 0),
-      tglLapor: rk.Tgl_Lapor || '', dilaporOleh: rk.Dilapor_Oleh || '', penjelasan: rk.Penjelasan_Lapor || '', tglFinal: rk.Tgl_Final || '',
-      diverifikasiOleh: rk.Diverifikasi_Oleh || '', tglVerifikasi: rk.Tgl_Verifikasi || '', catatanAudit: rk.Catatan_Audit || ''
-    };
+  var JENIS_TAMBAHAN = ['Over budget', 'Non-manifest', 'Insentif', 'Penyesuaian', 'Lainnya'];
+  function snapshotRekap(r) {
+    return { p: { ID_Pesanan: r.id, Tab: r.p.Tab, Nama: r.p.Nama, Trip: r.p.Trip, PIC: r.p.PIC, Pax: r.inf.pax, Harga: r.inf.harga, Tgl_Mulai: r.inf.mulai, Tgl_Selesai: r.inf.selesai },
+      bagian: r.bagian, kode: r.kode, kapal: r.kapal, kol: r.kol, penjualan: r.penjualan, pengeluaran: r.pengeluaran, laba: r.laba, over: r.over, budgetKalkulasi: r.budgetKalkulasi };
   }
-  function rekapSemua(D, today) { var ix = indeks(D); return urutkan(D.Trip.filter(function (t) { return t.Status !== 'Batal'; }), function (t) { return t.Tgl_Berangkat; }).map(function (t) { return rekapTrip(D, ix, t, today); }); }
-
-  function biayaPerKategori(D, ix, idTrip) {
-    var rls = (ix.rlsPerTrip[idTrip] || []).filter(function (r) { return r.Status !== 'Ditolak'; });
-    var o = {};
-    if (rls.length) rls.forEach(function (r) { o[r.Kategori] = (o[r.Kategori] || 0) + num(r.Nominal); });
-    else { var ba = budgetAktif(ix, idTrip) || budgetTerbaru(ix, idTrip); if (ba) (ix.itemPerBgt[ba.ID_Budget] || []).forEach(function (i) { o[i.Kategori] = (o[i.Kategori] || 0) + num(i.Subtotal); }); }
-    return o;
+  /** Rekap satu pesanan: kalkulasi (BUDGET) + tambahan Admin (over budget, non-manifest, insentif, penyesuaian). */
+  function rekapPesanan(D, ix, p, S, today) {
+    var id = p.ID_Pesanan, row = ix.rek[id] || null, status = row ? (row.Status || 'Draft') : 'Draft', kunci = status === 'Terkunci';
+    var snap = kunci ? parseJson(row.Snapshot, null) : null;
+    if (snap && snap.kol) {                                           // margin terkunci → angka beku (tidak berubah walau sheet/kalkulasi diedit)
+      var pS = Object.assign({}, p, snap.p || {}); var infS = infoPesanan(pS, S); infS.bagian = snap.bagian || infS.bagian;
+      return { id: id, p: pS, inf: infS, bagian: infS.bagian, kode: snap.kode, kapal: snap.kapal || '', kol: snap.kol, asal: null, tambahan: parseJson(row.Tambahan, []) || [], over: num(snap.over),
+        penjualan: num(snap.penjualan), pengeluaran: num(snap.pengeluaran), laba: num(snap.laba), margin: num(snap.penjualan) ? num(snap.laba) / num(snap.penjualan) : 0, budgetKalkulasi: num(snap.budgetKalkulasi),
+        status: status, kunci: true, row: row, adaKalkulasi: true, selesai: !!(infS.selesai && today > infS.selesai), rugi: num(snap.laba) < 0, hilangDiSheet: !ix.psn[id] };
+    }
+    var inf = infoPesanan(p, S), b = inf.bagian, kal = ringkasKalkulasi(ix, id), kol = {}, asal = {};
+    REKAP_KOLOM[b].forEach(function (k) { kol[k[0]] = 0; asal[k[0]] = { kalkulasi: 0, tambahan: 0 }; });
+    kal.items.forEach(function (i) { var k = kolomValid(b, i.Kolom) || tebakKolom(b, i.Uraian, i.Ke_TL === 'YA' ? i.Grup : ''); kol[k] += num(i.Budget); asal[k].kalkulasi += num(i.Budget); });
+    var tamb = parseJson(row && row.Tambahan, []) || [], over = 0;
+    tamb.forEach(function (t) { var k = kolomValid(b, t.kolom) || kolomCadangan(b); kol[k] += num(t.nominal); asal[k].tambahan += num(t.nominal); if (t.jenis === 'Over budget') over += num(t.nominal); });
+    var penjualan = inf.pax * inf.harga || inf.total, pengeluaran = 0; Object.keys(kol).forEach(function (k) { pengeluaran += kol[k]; });
+    var laba = penjualan - pengeluaran;
+    return { id: id, p: p, inf: inf, bagian: b, kode: (row && str(row.Kode_Trip)) || inf.kode, kapal: row ? str(row.Kapal) : '', kol: kol, asal: asal, tambahan: tamb, over: over,
+      penjualan: penjualan, pengeluaran: pengeluaran, laba: laba, margin: penjualan ? laba / penjualan : 0, budgetKalkulasi: kal.total,
+      status: status, kunci: false, row: row, adaKalkulasi: kal.ada, selesai: !!(inf.selesai && today > inf.selesai), rugi: laba < 0, hilangDiSheet: false };
   }
-
-  /** Laporan laba rugi per periode. Hanya trip yang realisasinya sudah FINAL (disetujui Finance) masuk laporan.
-   *  opsi: {dari, sampai, idTrip, today, semua:true → semua trip ikut (rekap operasional / grafik estimasi)} */
-  function labaRugi(D, opsi) {
-    opsi = opsi || {}; var today = opsi.today || hariIni();
-    var ix = indeks(D);
-    var trips = D.Trip.filter(function (t) {
-      if (t.Status === 'Batal') return false;
-      if (opsi.idTrip && t.ID_Trip !== opsi.idTrip) return false;
-      if (opsi.dari && t.Tgl_Berangkat < opsi.dari) return false;
-      if (opsi.sampai && t.Tgl_Berangkat > opsi.sampai) return false;
-      return true;
+  function dalamRentang(t, dari, sampai) { return !!t && (!dari || t >= dari) && (!sampai || t <= sampai); }
+  /** Daftar rekap periode (berdasarkan tanggal mulai trip). opsi: {dari, sampai, bagian, S, today} */
+  function rekapDaftar(D, opsi) {
+    opsi = opsi || {}; var ix = indeks(D), S = opsi.S || {}, today = opsi.today || '', out = [], ada = {};
+    (D.Pesanan || []).forEach(function (p) {
+      var r = rekapPesanan(D, ix, p, S, today); ada[r.id] = 1;
+      if ((opsi.dari || opsi.sampai) && !dalamRentang(r.inf.mulai, opsi.dari, opsi.sampai)) return;
+      if (opsi.bagian && r.bagian !== opsi.bagian) return; out.push(r);
     });
-    var semua = urutkan(trips, function (t) { return t.Tgl_Berangkat; }).map(function (t) {
-      var r = rekapTrip(D, ix, t, today); r.kategori = biayaPerKategori(D, ix, t.ID_Trip); r.bulan = t.Tgl_Berangkat.slice(0, 7); return r;
+    (D.Rekap || []).forEach(function (row) {                          // baris sudah dikunci tapi pesanannya hilang dari sheet → tetap dari snapshot
+      if (ada[row.ID_Pesanan] || row.Status !== 'Terkunci') return;
+      var snap = parseJson(row.Snapshot, null); if (!snap || !snap.p) return;
+      var r = rekapPesanan(D, ix, snap.p, S, today);
+      if ((opsi.dari || opsi.sampai) && !dalamRentang(r.inf.mulai, opsi.dari, opsi.sampai)) return;
+      if (opsi.bagian && r.bagian !== opsi.bagian) return; out.push(r);
     });
-    var baris = opsi.semua ? semua : semua.filter(function (r) { return r.final; }), tertunda = semua.filter(function (r) { return !r.final; });
-    var kat = {}; baris.forEach(function (b) { Object.keys(b.kategori).forEach(function (k) { kat[k] = (kat[k] || 0) + b.kategori[k]; }); });
-    var perBulan = {};
-    baris.forEach(function (b) { var m = perBulan[b.bulan] = perBulan[b.bulan] || { bulan: b.bulan, pendapatan: 0, biaya: 0, laba: 0, trip: 0, pax: 0 }; m.pendapatan += b.pendapatan; m.biaya += b.biaya; m.laba += b.laba; m.trip++; m.pax += b.pax; });
-    var totP = jumlah(baris, function (b) { return b.pendapatan; }), totB = jumlah(baris, function (b) { return b.biaya; });
-    var tP = jumlah(tertunda, function (b) { return b.pendapatan; }), tB = jumlah(tertunda, function (b) { return b.biaya; });
-    return {
-      baris: baris, tertunda: tertunda, kategori: kat, perBulan: urutkan(Object.keys(perBulan).map(function (k) { return perBulan[k]; }), function (m) { return m.bulan; }),
-      total: { pendapatan: totP, biaya: totB, laba: totP - totB, margin: totP ? Math.round((totP - totB) / totP * 1000) / 10 : 0, kas: jumlah(baris, function (b) { return b.kasMasuk; }), pax: jumlah(baris, function (b) { return b.pax; }), trip: baris.length,
-        over: baris.filter(function (b) { return b.overBudget; }).length, lebih: jumlah(baris, function (b) { return b.lebih; }), rugi: baris.filter(function (b) { return b.laba < 0; }).length },
-      totalTertunda: { trip: tertunda.length, pendapatan: tP, biaya: tB, laba: tP - tB, menungguAudit: tertunda.filter(function (b) { return b.statusAudit === RLS.DIAJUKAN; }).length }
-    };
+    return urutkan(out, function (r) { return (r.inf.mulai || '9999') + '|' + r.kode; });
+  }
+  function totalRekap(rows) {
+    var t = { n: rows.length, pax: 0, penjualan: 0, pengeluaran: 0, laba: 0, over: 0, terkunci: 0, siap: 0, rugi: 0 };
+    rows.forEach(function (r) { t.pax += r.inf.pax; t.penjualan += r.penjualan; t.pengeluaran += r.pengeluaran; t.laba += r.laba; t.over += r.over; if (r.kunci) t.terkunci++; if (r.status === 'Siap Dicek') t.siap++; if (r.rugi) t.rugi++; });
+    t.margin = t.penjualan ? t.laba / t.penjualan : 0; return t;
   }
 
+  /** Periode: 'YYYY-MM' | 'YYYY' | 'Qn-YYYY' | 'semua' → {dari, sampai, label} */
   function rentangPeriode(kode, today) {
-    var y = Number(today.slice(0, 4)), m = Number(today.slice(5, 7));
-    function akhirBulan(yy, mm) { return new Date(Date.UTC(yy, mm, 0)).toISOString().slice(0, 10); }
-    if (kode === 'bulan-lalu') { var py = m === 1 ? y - 1 : y, pm = m === 1 ? 12 : m - 1; return { dari: py + '-' + pad(pm, 2) + '-01', sampai: akhirBulan(py, pm), label: BULAN[pm - 1] + ' ' + py }; }
-    if (kode === 'kuartal') { var q = Math.floor((m - 1) / 3), qm = q * 3 + 1; return { dari: y + '-' + pad(qm, 2) + '-01', sampai: akhirBulan(y, qm + 2), label: 'Kuartal ' + (q + 1) + ' ' + y }; }
-    if (kode === 'tahun') return { dari: y + '-01-01', sampai: y + '-12-31', label: 'Tahun ' + y };
-    if (kode === '90hari') return { dari: tambahHari(today, -60), sampai: tambahHari(today, 30), label: '60 hari lalu – 30 hari ke depan' };
-    if (kode === 'semua') return { dari: '', sampai: '', label: 'Semua waktu' };
-    return { dari: y + '-' + pad(m, 2) + '-01', sampai: akhirBulan(y, m), label: BULAN[m - 1] + ' ' + y };
+    kode = str(kode) || (today || '').slice(0, 7);
+    var m;
+    if ((m = kode.match(/^(\d{4})-(\d{2})$/))) { var akhir = new Date(Date.UTC(+m[1], +m[2], 0)).getUTCDate(); return { dari: kode + '-01', sampai: kode + '-' + pad(akhir, 2), label: labelBulan(kode), kode: kode }; }
+    if ((m = kode.match(/^Q([1-4])-(\d{4})$/))) { var q = +m[1], b1 = (q - 1) * 3 + 1, b3 = b1 + 2, ak = new Date(Date.UTC(+m[2], b3, 0)).getUTCDate(); return { dari: m[2] + '-' + pad(b1, 2) + '-01', sampai: m[2] + '-' + pad(b3, 2) + '-' + pad(ak, 2), label: 'Kuartal ' + q + ' ' + m[2], kode: kode }; }
+    if ((m = kode.match(/^(\d{4})$/))) return { dari: kode + '-01-01', sampai: kode + '-12-31', label: 'Tahun ' + kode, kode: kode };
+    return { dari: '', sampai: '', label: 'Semua periode', kode: 'semua' };
+  }
+  function geserBulan(ym, n) { var y = +ym.slice(0, 4), m = +ym.slice(5, 7) - 1 + n; y += Math.floor(m / 12); m = ((m % 12) + 12) % 12; return y + '-' + pad(m + 1, 2); }
+
+  /** Laba rugi: hanya trip yang margin-nya sudah DIKUNCI Finance + biaya operasional (input Finance). */
+  function labaRugi(D, opsi) {
+    opsi = opsi || {}; var S = opsi.S || {}, per = rentangPeriode(opsi.periode, opsi.today);
+    var semua = rekapDaftar(D, { dari: per.dari, sampai: per.sampai, S: S, today: opsi.today });
+    var final = semua.filter(function (r) { return r.kunci; }), tertunda = semua.filter(function (r) { return !r.kunci; });
+    var b0 = per.dari ? per.dari.slice(0, 7) : '', b1 = per.sampai ? per.sampai.slice(0, 7) : '';
+    var ops = (D.Biaya_Operasional || []).filter(function (b) { return (!b0 || b.Bulan >= b0) && (!b1 || b.Bulan <= b1); });
+    var opsKat = {}; ops.forEach(function (b) { opsKat[b.Kategori || 'Lain-lain'] = (opsKat[b.Kategori || 'Lain-lain'] || 0) + num(b.Nominal); });
+    var L = labelRekap(S), hpp = { YB: {}, SB: {} }, perBagian = { YB: { penjualan: 0, pengeluaran: 0, laba: 0, n: 0 }, SB: { penjualan: 0, pengeluaran: 0, laba: 0, n: 0 } };
+    final.forEach(function (r) {
+      var pb = perBagian[r.bagian]; pb.penjualan += r.penjualan; pb.pengeluaran += r.pengeluaran; pb.laba += r.laba; pb.n++;
+      Object.keys(r.kol || {}).forEach(function (k) { hpp[r.bagian][k] = (hpp[r.bagian][k] || 0) + num(r.kol[k]); });
+    });
+    var perBulan = {};
+    function bln(k) { return perBulan[k] = perBulan[k] || { bulan: k, penjualan: 0, pengeluaran: 0, labaKotor: 0, operasional: 0, labaBersih: 0, trip: 0 }; }
+    final.forEach(function (r) { var x = bln(r.inf.bulan || 'tanpa'); x.penjualan += r.penjualan; x.pengeluaran += r.pengeluaran; x.labaKotor += r.laba; x.trip++; });
+    ops.forEach(function (b) { bln(b.Bulan).operasional += num(b.Nominal); });
+    Object.keys(perBulan).forEach(function (k) { perBulan[k].labaBersih = perBulan[k].labaKotor - perBulan[k].operasional; });
+    var t = totalRekap(final), operasional = jumlah(ops, function (b) { return b.Nominal; });
+    return { periode: per, final: final, tertunda: tertunda, ops: urutkan(ops, function (b) { return b.Bulan + (b.Tanggal || ''); }), opsKat: opsKat, hpp: hpp, label: L, perBagian: perBagian,
+      perBulan: urutkan(Object.keys(perBulan).map(function (k) { return perBulan[k]; }), function (x) { return x.bulan; }),
+      total: { trip: t.n, pax: t.pax, penjualan: t.penjualan, pengeluaran: t.pengeluaran, labaKotor: t.laba, operasional: operasional, labaBersih: t.laba - operasional, marginKotor: t.margin, marginBersih: t.penjualan ? (t.laba - operasional) / t.penjualan : 0, over: t.over, rugi: t.rugi },
+      totalTertunda: totalRekap(tertunda) };
   }
 
-  /** Data dashboard. opsi: {periode:'bulan'|'bulan-lalu'|'kuartal'|'tahun', idTrip, today, S} */
+  // ---------- Tagihan ----------
+  function tagihanPesanan(D, ix, p, S, today) {
+    var inf = infoPesanan(p, S), byr = urutkan(ix.byrPer[p.ID_Pesanan] || [], function (b) { return b.Tanggal; });
+    var bayar = jumlah(byr, function (b) { return b.Nominal; }), terbayar = inf.dp + bayar, sisa = Math.max(0, inf.total - terbayar);
+    var t = ix.tag[p.ID_Pesanan] || {}, manual = str(t.Status_Manual);
+    var lunas = manual === 'Lunas' || (manual !== 'Belum Lunas' && inf.total > 0 && sisa <= 0);
+    var jt = tglValid(tgl(t.Jatuh_Tempo)) ? tgl(t.Jatuh_Tempo) : inf.mulai, hari = jt ? selisihHari(today, jt) : 999;
+    return { id: p.ID_Pesanan, p: p, inf: inf, total: inf.total, dp: inf.dp, bayar: bayar, terbayar: terbayar, sisa: lunas ? 0 : sisa, sisaHitung: sisa, lunas: lunas,
+      status: lunas ? 'Lunas' : 'Belum Lunas', manual: manual, jatuhTempo: jt, hari: hari, telat: !lunas && sisa > 0 && hari < 0, dekat: !lunas && sisa > 0 && hari >= 0 && hari <= 7,
+      pembayaran: byr, tg: t, persen: inf.total ? Math.min(100, Math.round(terbayar / inf.total * 100)) : 0, diingatkan: str(t.Terakhir_Diingatkan), nIngat: num(t.Jumlah_Pengingat) };
+  }
+  function tagihanDaftar(D, S, today) { var ix = indeks(D); return (D.Pesanan || []).map(function (p) { return tagihanPesanan(D, ix, p, S, today); }); }
+
+  // ---------- Invoice ----------
+  function rekeningDari(S) { return (parseJson(S.INV_REKENING, []) || []).filter(function (r) { return r && (r.bank || r.norek); }); }
+  function syaratDari(S, inf) {
+    var s = parseJson(S.INV_SYARAT, null); if (!Array.isArray(s)) s = SYARAT_DEFAULT;
+    return s.filter(function (x) { return str(x); }).map(function (x) { return isiTemplate(x, { tglTrip: inf && inf.mulai ? tglPanjang(inf.mulai) : '(Tanggal Hari Pertama Trip)', trip: inf ? inf.durasi : '' }); });
+  }
+  function hitungInvoice(items, disc, dp) {
+    var sub = jumlah(items, function (i) { return num(i.qty) * num(i.harga); }), total = sub - num(disc);
+    return { subtotal: sub, disc: num(disc), total: total, dp: num(dp), sisa: total - num(dp) };
+  }
+  function dataInvoice(D, idInv, S) {
+    var inv = (D.Invoice || []).filter(function (i) { return i.ID_Invoice === idInv; })[0]; if (!inv) return null;
+    var p = (D.Pesanan || []).filter(function (x) { return x.ID_Pesanan === inv.ID_Pesanan; })[0] || { ID_Pesanan: inv.ID_Pesanan, Nama: '', Tab: '' };
+    var inf = infoPesanan(p, S), items = parseJson(inv.Item, []) || [], h = hitungInvoice(items, inv.Disc, inv.DP);
+    return { inv: inv, p: p, inf: inf, items: items, subtotal: h.subtotal, disc: h.disc, total: h.total, dp: h.dp, sisa: h.sisa, rekening: rekeningDari(S), syarat: syaratDari(S, inf),
+      billTo: str(inv.Bill_To).split(/\n/).map(str).filter(Boolean), namaFile: 'Invoice_' + (str(inv.Judul) || 'Invoice').replace(/[^\w]+/g, '_') + '_No._' + inv.No_Invoice + (num(inv.Urutan) > 1 ? '_' + num(inv.Urutan) : '') };
+  }
+  /** Saran isian invoice baru untuk satu pesanan (nomor melanjutkan invoice pertama pesanan itu). */
+  function saranInvoice(D, idPesanan, S, today) {
+    var ix = indeks(D), p = ix.psn[idPesanan]; if (!p) return null;
+    var inf = infoPesanan(p, S), tg = tagihanPesanan(D, ix, p, S, today);
+    var lama = urutkan((ix.invPer[idPesanan] || []).filter(function (i) { return i.Status !== 'Batal'; }), function (i) { return num(i.Urutan); });
+    var huruf = (str(S.INV_HURUF) || 'P').toUpperCase(), no, cid;
+    if (lama.length) { no = lama[0].No_Invoice; cid = lama[0].Customer_ID; }
+    else {
+      var bl = today.slice(5, 7), th = today.slice(0, 4), mx = 0;
+      (D.Invoice || []).forEach(function (i) { var m = String(i.No_Invoice).match(/^(\d{2})(\d{2})(\d{4})$/); if (m && m[2] === bl && m[3] === th) mx = Math.max(mx, Number(m[1])); });
+      no = pad(mx + 1, 2) + bl + th;
+      var thT = (inf.mulai || today).slice(0, 4), blT = Number((inf.mulai || today).slice(5, 7)), ur = 0;
+      (D.Invoice || []).forEach(function (i) { var m = String(i.Customer_ID).match(/^([A-Z]+)\/(\d+)\/[IVX]+\/(\d{4})$/); if (m && m[1] === huruf && m[3] === thT) ur = Math.max(ur, Number(m[2])); });
+      cid = huruf + '/' + pad(ur + 1, 3) + '/' + ROMAWI[blT - 1] + '/' + thT;
+    }
+    var bill = [str(p.Nama), inf.hp, inf.email, str(p.Asal)].filter(function (x) { return x && x !== '-'; }).join('\n');
+    var judul = tg.lunas ? 'Pelunasan' : (tg.terbayar > 0 ? 'Deposit' : 'Tagihan DP');
+    return { ID_Pesanan: idPesanan, No_Invoice: no, Customer_ID: cid, Urutan: lama.length ? num(lama[lama.length - 1].Urutan) + 1 : 1, Judul: judul, Tanggal: today, Bill_To: bill,
+      Item: [{ desk: str(p.Trip) + (inf.mulai ? ' (' + inf.jadwal + ')' : ''), qty: inf.pax || 1, harga: inf.harga || inf.total }], Disc: 0, DP: tg.terbayar,
+      Note_Judul: tg.lunas ? 'LUNAS' : (tg.terbayar > 0 ? (S.INV_NOTE_JUDUL || 'Deposit LUNAS') : 'Menunggu DP'), Note_Isi: S.INV_NOTE_TEKS || '' };
+  }
+
+  // ---------- Manifest ----------
+  function checklistDefault(p) {
+    var c = parseJson(p.Checklist, {}) || {};
+    return Object.keys(c).filter(function (k) { var v = str(c[k]); return v && v !== '-'; }).map(function (k) { return { item: judulKata(k), detail: str(c[k]) }; });
+  }
+  /** Teks itinerary (Google Docs / ketikan) → [{judul, baris:[{jam, teks}]}] */
+  function parseItinerary(teks, mulai) {
+    var s = String(teks || '').replace(/\r\n?/g, '\n').replace(/\u000b/g, '\n')
+      .replace(/([^\s\d:.])((?:[01]?\d|2[0-3])[:.][0-5]\d\s)/g, '$1\n$2');      // "Pertama07:00 …" → baris baru
+    var hari = [], cur = null, reHari = /^(hari\s+(ke-?\s*\d+|pertama|kedua|ketiga|keempat|kelima|keenam|ketujuh|kedelapan|kesembilan|kesepuluh)|day\s*\d+)\b/i;
+    s.split('\n').forEach(function (ln) {
+      ln = ln.replace(/\s+/g, ' ').trim(); if (!ln) return;
+      if (reHari.test(ln)) { cur = { judul: ln, baris: [] }; hari.push(cur); return; }
+      var m = ln.match(/^((?:[01]?\d|2[0-3])[:.][0-5]\d)\s*[-–]?\s*(.*)$/);
+      if (!cur) { cur = { judul: '', baris: [] }; hari.push(cur); }
+      if (m) cur.baris.push({ jam: m[1], teks: m[2] });
+      else if (cur.baris.length) cur.baris[cur.baris.length - 1].teks += ' ' + ln;
+      else cur.baris.push({ jam: '', teks: ln });
+    });
+    hari.forEach(function (h, i) {
+      if (!h.judul) h.judul = 'Hari ' + (HARI_KE[i] || 'ke-' + (i + 1));
+      if (!/\(/.test(h.judul) && tglValid(mulai)) h.judul += ' (' + tglPanjang(tambahHari(mulai, i)) + ')';
+    });
+    return hari.filter(function (h) { return h.baris.length || h.judul; });
+  }
+  function dataManifest(D, idPesanan, S) {
+    var ix = indeks(D), p = ix.psn[idPesanan]; if (!p) return null;
+    var inf = infoPesanan(p, S), m = ix.mnf[idPesanan] || {}, kal = ringkasKalkulasi(ix, idPesanan);
+    var tl = parseJson(m.TL, []) || [], cekP = parseJson(p.Checklist, {}) || {};
+    var namaTL = tl.map(function (x) { return x.nama; }).filter(Boolean).join(', ') || str(cekP.GUIDE) || '';
+    var tamuS = parseJson(m.Data_Tamu, null) || {};
+    var tamu = { nama: tamuS.nama || str(p.Nama), pax: tamuS.pax || inf.pax, hp: tamuS.hp || inf.hp || str(p.No_HP), jemput: tamuS.jemput || str(p.Penjemputan), drop: tamuS.drop || str(p.Lokasi_Drop) };
+    var cek = parseJson(m.Checklist, null); if (!Array.isArray(cek)) cek = checklistDefault(p);
+    var catatan = String(m.Catatan != null && m.ID_Pesanan ? m.Catatan : (S.MNF_CATATAN_DEFAULT || '')).split('\n').map(function (x) { return x.replace(/^\s*\d+[.)]\s*/, '').trim(); }).filter(Boolean);
+    var grup = GRUP_TL.map(function (g) { return { grup: g, items: kal.tl.filter(function (i) { return (GRUP_TL.indexOf(i.Grup) > -1 ? i.Grup : 'AGEN/LAIN-LAIN') === g; }) }; }).filter(function (g) { return g.items.length; });
+    return { p: p, inf: inf, m: m, ada: !!m.ID_Pesanan, pic: str(m.PIC_Kantor) || str(S.MNF_PIC_DEFAULT) || str(p.PIC), tl: tl, namaTL: namaTL, durasi: str(m.Durasi) || inf.durasi, tamu: tamu,
+      cek: cek, catatan: catatan, itinTeks: str(m.Itinerary), itin: parseItinerary(m.Itinerary, inf.mulai), peserta: (parseJson(m.Peserta, []) || []).filter(function (x) { return x && str(x.nama); }),
+      budget: { pax: kal.pax || inf.pax, grup: grup, items: kal.tl, total: kal.totalTL, terima: kal.terimaTL, ada: kal.tl.length > 0 }, tampilBudget: m.Tampil_Budget !== 'TIDAK',
+      status: m.Status || 'Belum Dibuat', namaFile: (str(tamu.nama) + ' ' + rentangTglFile(inf.mulai, inf.selesai) + (namaTL ? '_' + namaTL.split(',')[0].trim() : '')).toUpperCase().replace(/[\\\/:*?"<>|]+/g, '-') };
+  }
+  function rentangTglFile(a, b) {
+    if (!a) return ''; var A = Number(a.slice(8, 10)), B = b ? Number(b.slice(8, 10)) : A;
+    if (!b || a === b) return A + ' ' + BULAN[Number(a.slice(5, 7)) - 1] + ' ' + a.slice(0, 4);
+    if (a.slice(0, 7) === b.slice(0, 7)) return A + '-' + B + ' ' + BULAN[Number(a.slice(5, 7)) - 1] + ' ' + a.slice(0, 4);
+    return tglPanjang(a) + '-' + tglPanjang(b);
+  }
+
+  // ---------- Kalender (event per nama tamu) ----------
+  function eventPesanan(D, ix, p, S) {
+    var inf = infoPesanan(p, S); if (!inf.mulai) return null;
+    var m = ix.mnf[p.ID_Pesanan] || {}, tl = parseJson(m.TL, []) || [], peserta = (parseJson(m.Peserta, []) || []).filter(function (x) { return x && str(x.nama); });
+    var undang = parseJson(m.Diundang, []) || [];
+    var d = ['Tamu: ' + str(p.Nama) + ' (' + inf.pax + ' pax)', 'Trip: ' + str(p.Trip) + ' · ' + inf.durasi, 'Jadwal: ' + inf.jadwal, 'Kategori: ' + str(p.Tab)];
+    if (str(p.PIC)) d.push('PIC: ' + str(p.PIC));
+    if (inf.hp) d.push('No HP: ' + inf.hp);
+    if (str(p.Penjemputan) && str(p.Penjemputan) !== '-') d.push('Penjemputan: ' + str(p.Penjemputan));
+    if (str(p.Lokasi_Drop) && str(p.Lokasi_Drop) !== '-') d.push('Drop: ' + str(p.Lokasi_Drop));
+    if (str(p.Asal)) d.push('Asal: ' + str(p.Asal));
+    if (tl.length) d.push('Tim Lapang: ' + tl.map(function (x) { return x.nama; }).join(', '));
+    var cek = checklistDefault(p); if (cek.length) d.push('Kebutuhan: ' + cek.map(function (c) { return c.item + ' ' + c.detail; }).join(' · '));
+    if (peserta.length) { d.push(''); d.push('Peserta (' + peserta.length + '):'); peserta.forEach(function (x, i) { d.push((i + 1) + '. ' + str(x.nama) + (x.hp ? ' · ' + hp08(x.hp) : '')); }); }
+    if (m.Link_PDF) { d.push(''); d.push('Manifest: ' + m.Link_PDF); }
+    d.push(''); d.push('ID: ' + p.ID_Pesanan + ' · dibuat otomatis oleh ' + (S.APP_NAMA || 'aplikasi'));
+    var ev = { id: p.ID_Pesanan, judul: str(p.Nama) + ' · ' + str(p.Trip), deskripsi: d.join('\n'), mulai: inf.mulai, selesai: inf.selesai, warna: inf.bagian === 'SB' ? '6' : '7',
+      lampiran: m.File_ID ? { fileId: m.File_ID, url: m.Link_PDF, judul: 'Manifest ' + str(p.Nama) + '.pdf' } : null, tamu: undang };
+    ev.hash = hashTeks(JSON.stringify([ev.judul, ev.deskripsi, ev.mulai, ev.selesai, ev.warna, ev.lampiran && ev.lampiran.fileId, ev.tamu]));
+    return ev;
+  }
+
+  // ---------- Report & analitik ----------
+  function hitungGrup(rows, kunciFn) {
+    var o = {}; rows.forEach(function (r) { var k = kunciFn(r); if (!k) return; var x = o[k] = o[k] || { label: k, n: 0, pax: 0, total: 0 }; x.n++; x.pax += r.pax; x.total += r.total; });
+    return Object.keys(o).map(function (k) { return o[k]; });
+  }
+  /** opsi: {bulan:'YYYY-MM', basis:'trip'|'pesan', tab:'', S, today} */
+  function report(D, opsi) {
+    opsi = opsi || {}; var S = opsi.S || {}, bln = opsi.bulan || (opsi.today || '').slice(0, 7);
+    var semua = (D.Pesanan || []).map(function (p) { var i = infoPesanan(p, S); i.p = p; return i; }).filter(function (i) { return !opsi.tab || i.tab === opsi.tab; });
+    var diTrip = semua.filter(function (i) { return i.bulan === bln; }), diPesan = semua.filter(function (i) { return i.tglPesan.slice(0, 7) === bln; });
+    var dasar = opsi.basis === 'pesan' ? diPesan : diTrip, tren = [];
+    for (var k = -11; k <= 0; k++) {
+      var b = geserBulan(bln, k), t = semua.filter(function (i) { return i.bulan === b; }), ps = semua.filter(function (i) { return i.tglPesan.slice(0, 7) === b; });
+      tren.push({ bulan: b, pax: jumlah(t, function (i) { return i.pax; }), trip: t.length, pesan: ps.length, penjualan: jumlah(t, function (i) { return i.total; }) });
+    }
+    var hariBln = new Date(Date.UTC(+bln.slice(0, 4), +bln.slice(5, 7), 0)).getUTCDate(), perHari = [];
+    for (var h = 1; h <= hariBln; h++) perHari.push({ hari: h, n: 0, pax: 0 });
+    diPesan.forEach(function (i) { var x = perHari[Number(i.tglPesan.slice(8, 10)) - 1]; if (x) { x.n++; x.pax += i.pax; } });
+    var kota = urutkan(hitungGrup(dasar, function (i) { return kotaNormal(i.p.Asal) || 'Tidak diisi'; }), function (x) { return x.pax * 1000 + x.n; }, true);
+    var sumber = urutkan(hitungGrup(dasar, function (i) { var s = str(i.p.Sumber_Info); return !s || s === '-' ? 'Tidak diisi' : judulKata(s); }), function (x) { return x.n; }, true);
+    var dur = urutkan(hitungGrup(dasar, function (i) { return i.durasi; }), function (x) { return x.n * 1000 + x.pax; }, true);
+    var paket = urutkan(hitungGrup(dasar.filter(function (i) { return i.jenis === 'Open Trip'; }), function (i) { return str(i.p.Trip).replace(/\s+/g, ' '); }), function (x) { return x.n * 1000 + x.pax; }, true);
+    var lalu = semua.filter(function (i) { return i.bulan === geserBulan(bln, -1); }), laluPesan = semua.filter(function (i) { return i.tglPesan.slice(0, 7) === geserBulan(bln, -1); });
+    return { bulan: bln, label: labelBulan(bln), basis: opsi.basis === 'pesan' ? 'pesan' : 'trip',
+      pax: { total: jumlah(diTrip, function (i) { return i.pax; }), trip: diTrip.length, lalu: jumlah(lalu, function (i) { return i.pax; }), penjualan: jumlah(diTrip, function (i) { return i.total; }),
+        perTab: urutkan(hitungGrup(diTrip, function (i) { return i.tab; }), function (x) { return x.pax; }, true) },
+      frekuensi: { total: diPesan.length, pax: jumlah(diPesan, function (i) { return i.pax; }), lalu: laluPesan.length, perHari: perHari, tanpaTanggal: semua.filter(function (i) { return !i.tglPesan; }).length },
+      kota: kota.slice(0, 10), kotaJumlah: kota.length, sumber: sumber, durasi: dur, paket: paket.slice(0, 10), tren: tren, n: dasar.length };
+  }
+
+  // ---------- Dashboard ----------
   function dashboard(D, opsi) {
-    opsi = opsi || {}; var today = opsi.today || hariIni(), S = opsi.S || {};
-    var ix = indeks(D), per = rentangPeriode(opsi.periode || 'bulan', today);
-    var pjAktif = D.Penjualan.filter(function (p) { return p.Status !== 'Batal' && (!opsi.idTrip || p.ID_Trip === opsi.idTrip); });
-    var ringkas = pjAktif.map(function (p) { return ringkasPj(D, ix, p, today, S); });
-    var lr = labaRugi(D, { dari: per.dari, sampai: per.sampai, idTrip: opsi.idTrip, today: today, semua: true });
-    var lrF = labaRugi(D, { dari: per.dari, sampai: per.sampai, idTrip: opsi.idTrip, today: today });
-    var tripAktif = D.Trip.filter(function (t) { var s = statusTrip(t, today); return s === 'Open' || s === 'Berjalan'; });
-    var invBelum = D.Invoice.filter(function (i) { return i.Status === 'Terbit'; });
-    var sisaPiutang = jumlah(ringkas, function (r) { return r.sisa; });
-    var piutangDp = ringkas.filter(function (r) { return r.tahap === 'dp' || r.tahap === 'pelunasan'; });
-    var totTag = jumlah(ringkas, function (r) { return r.total; }), totBayar = jumlah(ringkas, function (r) { return r.bayar; });
-    // Grafik: per minggu (periode bulan) atau per bulan (periode panjang)
-    var seri = [];
-    if (per.dari && selisihHari(per.dari, per.sampai) <= 31) {
-      for (var w = 0; w < 5; w++) {
-        var a = tambahHari(per.dari, w * 7); if (a > per.sampai) break; var b = tambahHari(a, 6); if (b > per.sampai) b = per.sampai;
-        var bs = lr.baris.filter(function (r) { return r.trip.Tgl_Berangkat >= a && r.trip.Tgl_Berangkat <= b; });
-        seri.push({ label: 'Mg ' + (w + 1), pendapatan: jumlah(bs, function (r) { return r.pendapatan; }), biaya: jumlah(bs, function (r) { return r.biaya; }), kini: today >= a && today <= b });
-      }
-    } else {
-      lr.perBulan.forEach(function (m) { seri.push({ label: BLN[Number(m.bulan.slice(5, 7)) - 1], pendapatan: m.pendapatan, biaya: m.biaya, kini: m.bulan === today.slice(0, 7) }); });
+    opsi = opsi || {}; var S = opsi.S || {}, today = opsi.today, bln = today.slice(0, 7), ix = indeks(D);
+    var semua = (D.Pesanan || []).map(function (p) { var i = infoPesanan(p, S); i.p = p; i.status = statusTrip(i, today); return i; });
+    var bulanIni = semua.filter(function (i) { return i.bulan === bln; }), lalu = semua.filter(function (i) { return i.bulan === geserBulan(bln, -1); });
+    var tg = tagihanDaftar(D, S, today), belum = tg.filter(function (t) { return !t.lunas && t.sisa > 0 && t.inf.mulai >= tambahHari(today, -60); });
+    var rk = rekapDaftar(D, { S: S, today: today }), aksi = [];
+    semua.forEach(function (i) {
+      if (!i.mulai) return; var h = selisihHari(today, i.mulai);
+      if (h >= 0 && h <= 21 && !ix.kal[i.id]) aksi.push({ jenis: 'kalkulasi', i: i, h: h, label: 'Kalkulasi budget belum dibuat', go: 'kalkulasi/' + i.id, peran: 'Admin' });
+      var m = ix.mnf[i.id]; if (h >= 0 && h <= 7 && (!m || m.Status !== 'Terbit')) aksi.push({ jenis: 'manifest', i: i, h: h, label: m && m.Status === 'Berubah' ? 'Manifest berubah, perlu terbit ulang' : 'Manifest belum diterbitkan', go: 'manifest/' + i.id, peran: 'Admin' });
+    });
+    rk.forEach(function (r) {
+      if (!r.kunci && r.selesai && r.status === 'Draft' && r.inf.mulai >= tambahHari(today, -45)) aksi.push({ jenis: 'rekap', i: r.inf, r: r, h: selisihHari(today, r.inf.selesai), label: 'Trip selesai — lengkapi rekap lalu ajukan', go: 'rekap?id=' + r.id, peran: 'Admin' });
+      if (r.status === 'Siap Dicek') aksi.push({ jenis: 'kunci', i: r.inf, r: r, h: 0, label: 'Rekap siap dicek — kunci margin', go: 'rekap?id=' + r.id, peran: 'Finance' });
+    });
+    tg.forEach(function (t) { if (t.telat || (t.dekat && t.hari <= 3)) aksi.push({ jenis: 'tagihan', i: t.inf, t: t, h: t.hari, label: t.telat ? 'Tagihan lewat jatuh tempo' : 'Pelunasan jatuh tempo H-' + t.hari, go: 'tagihan?id=' + t.id, peran: 'Finance' }); });
+    var tren = []; for (var k = -5; k <= 0; k++) {
+      var b = geserBulan(bln, k), rows = rk.filter(function (r) { return r.inf.bulan === b; });
+      tren.push({ label: BLN[Number(b.slice(5, 7)) - 1], bulan: b, a: jumlah(rows, function (r) { return r.penjualan; }), b: jumlah(rows, function (r) { return r.pengeluaran; }), kini: k === 0, final: rows.filter(function (r) { return r.kunci; }).length, n: rows.length });
     }
-    var berikut = urutkan(D.Trip.filter(function (t) { return t.Status !== 'Batal' && t.Tgl_Berangkat >= today; }), function (t) { return t.Tgl_Berangkat; })[0] || null;
-    var berikutInfo = null;
-    if (berikut) {
-      var pjs = (ix.pjPerTrip[berikut.ID_Trip] || []).filter(function (p) { return p.Status !== 'Batal'; });
-      var mf = pjs.filter(function (p) { return ix.mnfPerPj[p.ID_Penjualan] && ix.mnfPerPj[p.ID_Penjualan].Status === 'Final'; });
-      berikutInfo = { trip: berikut, hari: selisihHari(today, berikut.Tgl_Berangkat), pax: jumlah(pjs, function (p) { return p.Jumlah_Pax; }), booking: pjs.length, manifestFinal: jumlah(mf, function (p) { return p.Jumlah_Pax; }) };
-    }
-    var antre = [];
-    ringkas.forEach(function (r) {
-      if (!r.peserta && r.bayar > 0) antre.push({ jenis: 'peserta', prioritas: 2, r: r, label: 'Belum masuk daftar peserta', aksi: 'Buat invoice' });
-      else if (r.peserta && !r.review) antre.push({ jenis: 'review', prioritas: 3, r: r, label: 'Perlu review peserta', aksi: 'Verifikasi' });
-      if (r.telat) antre.push({ jenis: 'telat', prioritas: 1, r: r, label: 'Lewat jatuh tempo', aksi: 'Tagih' });
-      if (r.hari >= 0 && r.hari <= 7 && (!r.manifest || r.manifest.Status !== 'Final')) antre.push({ jenis: 'manifest', prioritas: 2, r: r, label: 'Manifest belum final (H-' + r.hari + ')', aksi: 'Buka manifest' });
-    });
-    var bgtMenunggu = D.Budget_Header.filter(function (h) { return h.Status === 'Menunggu'; });
-    // Antrean realisasi anggaran: Admin melapor setelah trip selesai, Finance mengaudit
-    var rkSemua = D.Trip.filter(function (t) { return t.Status !== 'Batal' && (!opsi.idTrip || t.ID_Trip === opsi.idTrip); }).map(function (t) { return rekapTrip(D, ix, t, today); });
-    var realisasiAntre = [];
-    rkSemua.forEach(function (r) {
-      if (r.statusAudit === RLS.DIAJUKAN) realisasiAntre.push({ jenis: 'audit', peran: 'Finance', prioritas: r.overBudget ? 1 : 2, r: r, label: 'Audit laporan realisasi' + (r.overBudget ? ' · melebihi RAB ' + rpRingkas(r.lebih) : '') });
-      else if (r.perluLapor) realisasiAntre.push({ jenis: 'lapor', peran: 'Admin', prioritas: r.statusAudit === RLS.PERBAIKAN || r.statusAudit === RLS.DITOLAK ? 1 : 2, r: r, label: r.statusAudit === RLS.PERBAIKAN ? 'Realisasi perlu diperbaiki (catatan Finance)' : r.statusAudit === RLS.DITOLAK ? 'Laporan realisasi ditolak — susun ulang' : r.adaRealisasi ? 'Laporkan realisasi ke Finance' : 'Trip selesai — catat realisasi anggaran' });
-    });
+    var rkBln = rk.filter(function (r) { return r.inf.bulan === bln; });
     return {
-      periode: per, laba: lrF.total.laba, margin: lrF.total.margin, pendapatan: lr.total.pendapatan, biaya: lr.total.biaya, lr: lr, lrFinal: lrF,
-      labaEstimasi: lr.total.laba, marginEstimasi: lr.total.margin, tripFinal: lrF.total.trip, tripBelumFinal: lrF.totalTertunda.trip,
-      realisasiAntre: urutkan(realisasiAntre, function (a) { return a.prioritas; }), tripOver: rkSemua.filter(function (r) { return r.overBudget; }),
-      tripAktif: tripAktif.length, paxAktif: jumlah(pjAktif.filter(function (p) { var t = ix.trip[p.ID_Trip]; return t && statusTrip(t, today) !== 'Selesai'; }), function (p) { return p.Jumlah_Pax; }),
-      berangkatMingguIni: tripAktif.filter(function (t) { var h = selisihHari(today, t.Tgl_Berangkat); return h >= 0 && h <= 7; }).length,
-      invBelum: invBelum.length, invBelumNominal: jumlah(invBelum, function (i) { return i.Nominal; }),
-      invTelat: invBelum.filter(function (i) { return i.Jatuh_Tempo && i.Jatuh_Tempo < today; }).length,
-      sisaPiutang: sisaPiutang, bookingMenunggu: piutangDp.length,
-      collection: totTag ? Math.round(totBayar / totTag * 1000) / 10 : 0, totalTagihan: totTag, totalBayar: totBayar,
-      seri: seri, berikut: berikutInfo, antrean: urutkan(antre, function (a) { return a.prioritas; }), budgetMenunggu: bgtMenunggu,
-      invoiceTerbaru: urutkan(D.Invoice, function (i) { return (i.Dibuat || i.Tgl_Terbit) + i.No_Invoice; }, true).slice(0, 8)
-    };
-  }
-
-  function prosesInvoice(inv) { return parseJson(inv && inv.Status_Proses, {}) || {}; }
-
-  function deskripsiEvent(D, idPj, S) {
-    var ix = indeks(D), pj = ix.pj[idPj]; if (!pj) return null;
-    var r = ringkasPj(D, ix, pj, hariIni(), S), t = r.trip, c = r.cust;
-    var baris = ['🧳 ' + (S.APP_NAMA || 'YukX') + ' — Data Booking', '', 'Customer : ' + c.Nama + ' (' + pj.Jumlah_Pax + ' pax)', 'WhatsApp : ' + (c.No_WA || '-'), 'Total    : ' + rp(r.total),
-      'Terbayar : ' + rp(r.bayar) + ' (' + r.persen + '%)', 'Sisa     : ' + rp(r.sisa), 'Status   : ' + pj.Status, '', '🧾 Invoice:'];
-    r.invoices.forEach(function (i) { baris.push('• ' + i.No_Invoice + ' — ' + i.Jenis + ' ' + rp(i.Nominal) + ' [' + i.Status + ']' + (i.Link_PDF ? '\n  ' + i.Link_PDF : '')); });
-    if (!r.invoices.length) baris.push('• (belum ada)');
-    baris.push('', '📍 Meeting point: ' + (t.Meeting_Point || '-'), '⏱ Diperbarui: ' + tglId(hariIni()));
-    return { judul: '[' + t.Nama + '] - ' + c.Nama, mulai: t.Tgl_Berangkat, selesai: t.Tgl_Pulang || t.Tgl_Berangkat, deskripsi: baris.join('\n'), lokasi: t.Meeting_Point || t.Tujuan || '' };
-  }
-
-  /** Semua nilai placeholder invoice — dipakai template Docs (server) & pratinjau (browser). */
-  function dataInvoice(D, noInv, S) {
-    var ix = indeks(D), inv = null;
-    D.Invoice.forEach(function (i) { if (i.No_Invoice === noInv) inv = i; }); if (!inv) return null;
-    var pj = ix.pj[inv.ID_Penjualan] || {}, r = ringkasPj(D, ix, pj, hariIni(), S), t = r.trip, c = r.cust;
-    var sebelum = jumlah(r.invoices.filter(function (i) { return i.Tgl_Terbit + i.No_Invoice < inv.Tgl_Terbit + inv.No_Invoice; }), function (i) { return i.Nominal; });
-    var sisaSetelah = Math.max(0, num(pj.Total) - sebelum - num(inv.Nominal));
-    var items = [{ NO: '01', DESKRIPSI: 'Paket ' + t.Nama, KETERANGAN: rentangTgl(t.Tgl_Berangkat, t.Tgl_Pulang) + ' · ' + (t.Akomodasi || t.Tujuan || ''), QTY: pj.Jumlah_Pax + ' Pax', HARGA: rp(pj.Harga_per_Pax), JUMLAH: rp(num(pj.Harga_per_Pax) * num(pj.Jumlah_Pax)) }];
-    if (num(pj.Diskon) > 0) items.push({ NO: '02', DESKRIPSI: 'Potongan / Promo', KETERANGAN: 'Diskon khusus pemesanan', QTY: '1x', HARGA: '-' + rp(pj.Diskon), JUMLAH: '-' + rp(pj.Diskon) });
-    var verifUrl = (S.VERIF_URL || '') ? S.VERIF_URL + (S.VERIF_URL.indexOf('?') > -1 ? '&' : '?') + 'k=' + inv.Kode_Verifikasi : '';
-    return {
-      inv: inv, pj: pj, trip: t, cust: c, items: items,
-      nilai: {
-        APP_NAMA: S.APP_NAMA, APP_TAGLINE: S.APP_TAGLINE, PT_NAMA: S.PT_NAMA, PT_ALAMAT: S.PT_ALAMAT, PT_EMAIL: S.PT_EMAIL, PT_TELP: S.PT_TELP,
-        NO_INVOICE: inv.No_Invoice, JENIS: inv.Jenis === 'Full' ? 'Full Payment' : inv.Jenis, TGL_TERBIT: tglPanjang(inv.Tgl_Terbit), JATUH_TEMPO: tglPanjang(inv.Jatuh_Tempo),
-        STATUS: inv.Status === 'Lunas' ? 'LUNAS' : inv.Status === 'Batal' ? 'DIBATALKAN' : 'MENUNGGU PEMBAYARAN',
-        NAMA_CUSTOMER: c.Nama || '', EMAIL_CUSTOMER: c.Email || '', WA_CUSTOMER: c.No_WA || '', ALAMAT_CUSTOMER: c.Alamat || '',
-        NAMA_TRIP: t.Nama || '', TUJUAN: t.Tujuan || '', JADWAL: rentangTgl(t.Tgl_Berangkat, t.Tgl_Pulang), PAX: pj.Jumlah_Pax + ' Pax', MEETING_POINT: t.Meeting_Point || '-',
-        SUBTOTAL: rp(num(pj.Harga_per_Pax) * num(pj.Jumlah_Pax)), DISKON: num(pj.Diskon) ? '-' + rp(pj.Diskon) : 'Rp 0', TOTAL: rp(pj.Total),
-        NOMINAL: rp(inv.Nominal), TERBILANG: terbilang(inv.Nominal) + ' rupiah', SUDAH_DITAGIH: rp(sebelum), SISA_SETELAH: rp(sisaSetelah),
-        TERBAYAR: rp(r.bayar), SISA_TAGIHAN: rp(r.sisa),
-        BANK: S.BANK_NAMA, NOREK: S.BANK_NOREK, ATAS_NAMA: S.BANK_AN, CATATAN: inv.Catatan || S.INVOICE_CATATAN,
-        TTD_NAMA: S.TTD_NAMA, TTD_JABATAN: S.TTD_JABATAN, KODE_VERIFIKASI: inv.Kode_Verifikasi, URL_VERIFIKASI: verifUrl || ('Kode: ' + inv.Kode_Verifikasi)
-      }
-    };
-  }
-
-  function dataManifest(D, opsi, S) {
-    var ix = indeks(D), pjs;
-    if (opsi.idPenjualan) pjs = [ix.pj[opsi.idPenjualan]].filter(Boolean);
-    else pjs = urutkan((ix.pjPerTrip[opsi.idTrip] || []).filter(function (p) { return p.Status !== 'Batal'; }), function (p) { return p.Tgl_Booking; });
-    var t = ix.trip[opsi.idTrip || (pjs[0] || {}).ID_Trip] || {};
-    var rows = [], no = 0;
-    pjs.forEach(function (p) {
-      var c = ix.cust[p.ID_Customer] || {}, ang = urutkan(ix.angPerPj[p.ID_Penjualan] || [], function (a) { return num(a.Urutan); });
-      for (var i = 0; i < Math.max(num(p.Jumlah_Pax), ang.length); i++) {
-        var a = ang[i] || {}; no++;
-        rows.push({ NO: String(no), NAMA: a.Nama || (i === 0 ? c.Nama : '(belum diisi)'), IDENTITAS: a.Identitas || '-', GENDER: a.Gender || '-', TGL_LAHIR: a.Tgl_Lahir ? tglId(a.Tgl_Lahir) : '-', HP: a.No_HP || (i === 0 ? c.No_WA : '') || '-', BAJU: a.Ukuran_Baju || '-', KAMAR: a.Kamar || '-', BOOKING: c.Nama, CATATAN: a.Catatan || (i === 0 ? c.Catatan_Medis : '') || '' });
-      }
-    });
-    var c0 = pjs.length === 1 ? (ix.cust[pjs[0].ID_Customer] || {}) : {};
-    return {
-      trip: t, penjualan: pjs, rows: rows,
-      nilai: { APP_NAMA: S.APP_NAMA, PT_NAMA: S.PT_NAMA, NAMA_TRIP: t.Nama || '', TUJUAN: t.Tujuan || '', JADWAL: rentangTgl(t.Tgl_Berangkat, t.Tgl_Pulang), MEETING_POINT: t.Meeting_Point || '-', AKOMODASI: t.Akomodasi || '-',
-        TOTAL_PAX: rows.length + ' Pax', JUMLAH_BOOKING: String(pjs.length), NAMA_CUSTOMER: c0.Nama || 'Semua peserta', KONTAK_DARURAT: c0.Kontak_Darurat ? c0.Kontak_Darurat + ' (' + (c0.Telp_Darurat || '-') + ')' : '-',
-        TGL_CETAK: tglPanjang(hariIni()), JUDUL: pjs.length === 1 ? 'MANIFEST PESERTA' : 'MANIFEST TRIP' }
+      bulan: bln, pesanan: bulanIni.length, pax: jumlah(bulanIni, function (i) { return i.pax; }), paxLalu: jumlah(lalu, function (i) { return i.pax; }),
+      penjualan: jumlah(bulanIni, function (i) { return i.total; }), penjualanLalu: jumlah(lalu, function (i) { return i.total; }),
+      pesananBaru: semua.filter(function (i) { return i.tglPesan && i.tglPesan >= tambahHari(today, -29); }).length,
+      sisaTagihan: jumlah(belum, function (t) { return t.sisa; }), belumLunas: belum.length, telat: belum.filter(function (t) { return t.telat; }).length,
+      marginBulan: totalRekap(rkBln), terkunciBulan: rkBln.filter(function (r) { return r.kunci; }).length,
+      siapDicek: rk.filter(function (r) { return r.status === 'Siap Dicek'; }).length, rugi: rk.filter(function (r) { return r.rugi && r.inf.mulai >= tambahHari(today, -90); }),
+      aksi: urutkan(aksi, function (a) { return a.h; }), tren: tren,
+      mendatang: urutkan(semua.filter(function (i) { return i.mulai && i.selesai >= today; }), function (i) { return i.mulai + i.p.Nama; }).slice(0, 10),
+      berjalan: semua.filter(function (i) { return i.status === 'Berjalan'; })
     };
   }
 
   function verifikasiPublik(D, kode) {
-    kode = str(kode).toUpperCase(); if (!kode || kode.length < 8) return fail('Kode verifikasi tidak valid.');
-    var inv = null; D.Invoice.forEach(function (i) { if (str(i.Kode_Verifikasi).toUpperCase() === kode) inv = i; });
-    if (!inv) return fail('Dokumen dengan kode ini tidak ditemukan. Kemungkinan palsu atau salah ketik.');
-    var ix = indeks(D), pj = ix.pj[inv.ID_Penjualan] || {}, t = ix.trip[pj.ID_Trip] || {}, c = ix.cust[pj.ID_Customer] || {};
-    return ok({ noInvoice: inv.No_Invoice, jenis: inv.Jenis, tglTerbit: tglPanjang(inv.Tgl_Terbit), nominal: rp(inv.Nominal), status: inv.Status, customer: samarkanNama(c.Nama), trip: t.Nama || '-', jadwal: rentangTgl(t.Tgl_Berangkat, t.Tgl_Pulang), sah: inv.Status !== 'Batal' });
+    kode = str(kode).toUpperCase().replace(/[^A-Z0-9]/g, ''); if (kode.length < 8) return fail('Kode verifikasi tidak valid.');
+    var inv = (D.Invoice || []).filter(function (i) { return str(i.Kode_Verifikasi).toUpperCase() === kode; })[0];
+    if (!inv || inv.Status === 'Draft') return fail('Dokumen dengan kode ' + kode + ' tidak ditemukan.');
+    var S = {}; (D.Pengaturan || []).forEach(function (r) { S[r.Kunci] = r.Nilai; });
+    var d = dataInvoice(D, inv.ID_Invoice, S);
+    return ok({ sah: inv.Status !== 'Batal', jenis: inv.Judul || 'Invoice', status: inv.Status, noInvoice: inv.No_Invoice, tglTerbit: tglPanjang(inv.Tanggal), customer: samarkanNama(d.p.Nama || (d.billTo[0] || '')),
+      trip: str(d.p.Trip), jadwal: d.inf.jadwal, nominal: rp(d.total) });
   }
 
-  // ==========================================================================
-  // 6. LOGIKA TULIS — helper perhitungan ulang
-  // ==========================================================================
-  function recalcPenjualan(tx, id) {
-    var pj = tx.get('Penjualan', id); if (!pj) return null;
-    var bayar = jumlah(tx.where('Pembayaran', function (b) { return b.ID_Penjualan === id && b.Status_Verifikasi === 'Terverifikasi'; }), function (b) { return b.Nominal; });
-    var total = num(pj.Total), sisa = Math.max(0, total - bayar), lama = pj.Status;
-    var status = lama === 'Batal' ? 'Batal' : (bayar <= 0 ? 'Booking' : bayar >= total ? 'Lunas' : 'DP');
-    pj = tx.update('Penjualan', id, { Terbayar: bayar, Sisa: sisa, Status: status, Diperbarui: tx.now() });
-    // Status invoice: lunas bila kumulatif tagihan tertutup pembayaran
-    var cum = 0;
-    urutkan(tx.where('Invoice', function (i) { return i.ID_Penjualan === id && i.Status !== 'Batal'; }), function (i) { return i.Tgl_Terbit + i.No_Invoice; }).forEach(function (i) {
-      cum += num(i.Nominal); tx.update('Invoice', i.No_Invoice, { Status: bayar >= cum ? 'Lunas' : 'Terbit' });
+  /**
+   * Tata letak rekap PERSIS template "Dummy Rekapitulasi" (dipakai penulis Google Sheet di server
+   * dan ekspor Excel di browser agar hasilnya identik). Hasil: {sel:[{r,c,v,f,g}], gabung:[[r1,c1,r2,c2]], lebar:[]}.
+   * g (gaya): judul | kO (kepala oranye) | kP (kepala peach) | kH (kepala hijau) | kG (hijau muda) | kK (kuning) | kM (merah) | kW (putih tebal)
+   *           | no | teks | angka | uang | uangH (uang latar hijau) | persen
+   */
+  function tataRekap(data, L) {
+    var sel = [], gabung = [], blok = [], r = 0;
+    function put(rr, c, v, g, f) { sel.push({ r: rr, c: c, v: v == null ? '' : v, g: g || 'teks', f: f || '' }); }
+    function A1(c, rr) { return String.fromCharCode(65 + c) + (rr + 1); }
+    ['YB', 'SB'].forEach(function (b) {
+      var lb = L[b].L, kol = L[b].kolom, rows = (data && data[b]) || [], h1, h2, yb = b === 'YB';
+      put(r, 0, lb.JUDUL, 'judul'); gabung.push([r, 0, r, 1]); r += 2; h1 = r; h2 = r + 1;
+      [[0, lb.NO], [1, lb.KODE], [2, lb.QTY], [3, lb.PIC], [4, lb.PRICE]].forEach(function (x) { put(h1, x[0], x[1], 'kO'); put(h2, x[0], '', 'kO'); gabung.push([h1, x[0], h2, x[0]]); });
+      put(h1, 5, lb.PENJUALAN, yb ? 'kH' : 'kG'); put(h2, 5, '', yb ? 'kH' : 'kG'); gabung.push([h1, 5, h2, 5]);
+      var adaHpp = !!str(lb.HPP), warnaSB = ['kP', 'kO', 'kO', 'kO', 'kO', 'kP', 'kO', 'kO', 'kP', 'kO'];
+      if (adaHpp) { put(h1, 6, lb.HPP, 'kW'); for (var c = 7; c <= 15; c++) put(h1, c, '', 'kW'); gabung.push([h1, 6, h1, 15]); kol.forEach(function (k, i) { put(h2, 6 + i, k.l, 'kP'); }); }
+      else kol.forEach(function (k, i) { var g = yb ? 'kP' : warnaSB[i]; put(h1, 6 + i, k.l, g); put(h2, 6 + i, '', g); gabung.push([h1, 6 + i, h2, 6 + i]); });
+      put(h1, 16, lb.PENGELUARAN, yb ? 'kH' : 'kM'); put(h2, 16, '', yb ? 'kH' : 'kM'); gabung.push([h1, 16, h2, 16]);
+      put(h1, 17, lb.LABA, yb ? 'kO' : 'kK'); put(h2, 17, '', yb ? 'kO' : 'kK'); gabung.push([h1, 17, h2, 17]);
+      put(h1, 18, lb.MARGIN_A, yb ? 'kO' : 'kK'); put(h2, 18, lb.MARGIN_B, yb ? 'kO' : 'kK');
+      put(h1, 19, lb.RATAAN_A, yb ? 'kO' : 'kK'); put(h2, 19, lb.RATAAN_B, yb ? 'kO' : 'kK');
+      r += 2;
+      rows.forEach(function (x, i) {
+        var rr = r + i;
+        put(rr, 0, i + 1, 'no'); put(rr, 1, x.kode, 'teks'); put(rr, 2, x.qty, 'angka'); put(rr, 3, x.pic, 'teks'); put(rr, 4, x.price, 'uang');
+        put(rr, 5, num(x.qty) * num(x.price), 'uang', '=' + A1(2, rr) + '*' + A1(4, rr));
+        var peng = 0; kol.forEach(function (k, j) { var v = num((x.kol || {})[k.k]); peng += v; put(rr, 6 + j, v || '', 'uang'); });
+        var jual = num(x.qty) * num(x.price), laba = jual - peng;
+        put(rr, 16, peng, 'uangH', '=SUM(' + A1(6, rr) + ':' + A1(15, rr) + ')');
+        put(rr, 17, laba, 'uang', '=' + A1(5, rr) + '-' + A1(16, rr));
+        put(rr, 18, laba, 'uang', '=' + A1(17, rr));
+        put(rr, 19, jual ? laba / jual : 0, 'persen', '=IFERROR(' + A1(18, rr) + '/' + A1(5, rr) + ',0)');
+      });
+      blok.push([h1, r + Math.max(rows.length, 1) - 1]);
+      r += Math.max(rows.length, 1) + 3;
     });
-    return { pj: pj, lama: lama, baru: status, bayar: bayar, sisa: sisa };
+    return { sel: sel, gabung: gabung, blok: blok, baris: r, kolom: 20, lebar: [5, 70, 7, 13, 12, 14, 13, 12, 12, 13, 12, 12, 12, 12, 12, 12, 15, 15, 14, 10] };
   }
-
-  function recalcRekap(tx, idTrip) {
-    var t = tx.get('Trip', idTrip); if (!t) return null;
-    var ix = indeks(tx.D), r = rekapTrip(tx.D, ix, t, tx.today());
-    var row = { ID_Trip: idTrip, Pax: r.pax, Pendapatan: r.pendapatan, Kas_Masuk: r.kasMasuk, Budget_Aktif: r.budget, Versi_Budget: r.versiBudget, Realisasi: r.realisasi, Selisih: r.selisih, Laba: r.laba, Margin: r.margin, Diperbarui: tx.now() };
-    var cur = tx.get('Rekap_Operasional', idTrip);
-    row.Status_Audit = r.statusAudit;                       // Belum/Draft mengikuti ada-tidaknya nota; status lain hanya diubah lewat alur lapor/audit
-    if (cur) return tx.update('Rekap_Operasional', idTrip, row);
-    return tx.insert('Rekap_Operasional', row);
-  }
-
-  function pastikanPeserta(tx, pj) {
-    var ada = tx.where('Peserta_Trip', function (p) { return p.ID_Penjualan === pj.ID_Penjualan; })[0];
-    if (ada) { if (num(ada.Jumlah_Pax) !== num(pj.Jumlah_Pax)) tx.update('Peserta_Trip', ada.ID_Peserta, { Jumlah_Pax: pj.Jumlah_Pax }); return ada; }
-    return tx.insert('Peserta_Trip', { ID_Trip: pj.ID_Trip, ID_Customer: pj.ID_Customer, ID_Penjualan: pj.ID_Penjualan, Jumlah_Pax: pj.Jumlah_Pax, Status_Data: pj.Review_Peserta === 'YA' ? 'Terverifikasi' : 'Sudah Masuk', Tgl_Masuk: tx.today() });
-  }
-  function pastikanManifest(tx, pj) {
-    var ada = tx.where('Manifest', function (m) { return m.Tipe === 'Per Customer' && m.ID_Penjualan === pj.ID_Penjualan; })[0];
-    if (ada) return ada;
-    return tx.insert('Manifest', { Tipe: 'Per Customer', ID_Customer: pj.ID_Customer, ID_Penjualan: pj.ID_Penjualan, ID_Trip: pj.ID_Trip, Status: 'Draft', Versi: 1, Dibuat_Oleh: tx.user.nama, Diperbarui: tx.now() });
-  }
-  function pastikanAnggotaUtama(tx, pj) {
-    if (tx.where('Anggota_Rombongan', function (a) { return a.ID_Penjualan === pj.ID_Penjualan; }).length) return;
-    var c = tx.get('Customer', pj.ID_Customer) || {};
-    tx.insert('Anggota_Rombongan', { ID_Penjualan: pj.ID_Penjualan, ID_Customer: pj.ID_Customer, Nama: c.Nama, Identitas: c.Identitas, Gender: c.Gender, Tgl_Lahir: c.Tgl_Lahir, No_HP: c.No_WA, Urutan: 1, Catatan: c.Catatan_Medis });
-  }
-  function jadwalkanEvent(tx, pj, setelah) { return tx.job('CAL_UPSERT', pj.ID_Penjualan, {}, setelah); }
-
-  function nomorInvoiceBaru(tx, tanggal) {
-    var th = tanggal.slice(0, 4), bl = tanggal.slice(5, 7), mx = 0;
-    tx.all('Invoice').forEach(function (i) { var m = String(i.No_Invoice).match(/^YX\/INV\/(\d{4})\/\d{2}\/(\d+)$/); if (m && m[1] === th) mx = Math.max(mx, Number(m[2])); });
-    return 'YX/INV/' + th + '/' + bl + '/' + pad(mx + 1, 4);
-  }
-  function kodeVerif(tx) { return String(tx.H.uuid()).replace(/[^a-z0-9]/gi, '').toUpperCase().slice(0, 12); }
 
   // ==========================================================================
-  // 7. AKSI (API) — setiap fungsi (tx, data) → ok/fail
+  // 6. AKSI (API) — setiap fungsi (tx, data) → ok/fail
   // ==========================================================================
   var A = {};
+  var FIELD_PESANAN = ['No', 'Nama', 'PIC', 'No_HP', 'Pax', 'Trip', 'Tgl_Mulai', 'Tgl_Selesai', 'Asal', 'Sumber_Info', 'Email', 'Instagram', 'Penjemputan', 'Lokasi_Drop', 'Harga', 'Total', 'DP', 'Sisa', 'Setoran', 'Link_Bukti_TF', 'Link_Itinerary', 'Link_Kalkulasi', 'Tgl_Pesan'];
+  function kolomTab(tx, tab) { var t = tx.get('Sumber_Tab', tab); if (!t) throw salah('Kategori "' + tab + '" tidak ada di spreadsheet sumber. Muat ulang data lalu coba lagi.'); return parseJson(t.Kolom, []) || []; }
+  function pesananAda(tx, id) { var p = tx.get('Pesanan', id); if (!p) throw salah('Pesanan tidak ditemukan di spreadsheet sumber (mungkin baris sudah dihapus). Muat ulang data.'); return p; }
+  function rekapTerkunci(tx, id) { var r = tx.get('Rekap', id); return !!(r && r.Status === 'Terkunci'); }
+  function jobRekapSheet(tx, inf) { if (inf && inf.bulan && tx.S().REKAP_SHEET_AKTIF === 'YA') tx.job('REKAP_SHEET', inf.bulan, {}); }
+  function jobKalender(tx) { tx.job('KAL_SINKRON', 'semua', {}); }
 
-  // ---------- Customer ----------
-  A['customer.simpan'] = function (tx, d) {
-    var nama = str(d.Nama); if (!nama) throw salah('Nama customer wajib diisi.');
-    var wa = hp08(d.No_WA); if (wa && !hpValid(wa)) throw salah('Format nomor WhatsApp tidak valid (contoh: 0812xxxxxxxx).');
-    var email = str(d.Email).toLowerCase(); if (email && !emailValid(email)) throw salah('Format email tidak valid.');
-    if (email && tx.where('Customer', function (c) { return c.Status !== 'Dihapus' && c.Email.toLowerCase() === email && c.ID_Customer !== d.ID_Customer; }).length) throw salah('Email ' + email + ' sudah dipakai customer lain.');
-    var row = { Nama: nama, No_WA: wa, Email: email, Alamat: str(d.Alamat), Kota: str(d.Kota), Identitas: str(d.Identitas), Tgl_Lahir: tgl(d.Tgl_Lahir), Gender: str(d.Gender), Kontak_Darurat: str(d.Kontak_Darurat), Telp_Darurat: hp08(d.Telp_Darurat), Catatan_Medis: str(d.Catatan_Medis), Tag: str(d.Tag), Catatan: str(d.Catatan), Diperbarui: tx.now() };
+  // ---------- Pesanan (ditulis ke spreadsheet klien oleh host) ----------
+  A['pesanan.simpan'] = function (tx, d) {
+    var lama = d.ID_Pesanan ? tx.get('Pesanan', d.ID_Pesanan) : null;
+    if (d.ID_Pesanan && !lama) throw salah('Pesanan tidak ditemukan di sheet (mungkin baru dihapus). Muat ulang data.');
+    var tab = lama ? lama.Tab : str(d.Tab); if (!tab) throw salah('Pilih kategori (tab) pesanan.');
+    if (lama && d.Tab && d.Tab !== lama.Tab) throw salah('Kategori tidak bisa dipindah. Hapus lalu buat pesanan baru di kategori tujuan.');
+    var kol = kolomTab(tx, tab), punya = {}, labelLain = {}, labelCek = {};
+    kol.forEach(function (k) { if (k.kunci) punya[k.kunci] = 1; else if (k.grup && /CHECK|CEK/.test(normalHeader(k.grup))) labelCek[k.label] = 1; else labelLain[k.label] = 1; });
+    var nama = str(d.Nama); if (!nama) throw salah('Nama wajib diisi.');
+    var pax = num(d.Pax); if (punya.Pax && pax <= 0) throw salah('PAX minimal 1.');
+    var mulai = tgl(d.Tgl_Mulai); if (punya.Tgl_Mulai && !tglValid(mulai)) throw salah('Tanggal trip wajib diisi.');
+    var sel = tgl(d.Tgl_Selesai); if (sel && !tglValid(sel)) sel = '';
+    if (sel && mulai && sel < mulai) throw salah('Tanggal selesai tidak boleh sebelum tanggal mulai.');
+    var hp = str(d.No_HP); if (hp && hp !== '-' && !hpValid(hp)) throw salah('Nomor HP tidak valid (contoh: 0812xxxxxxxx).');
+    var email = str(d.Email); if (email && email !== '-' && !emailValid(email)) throw salah('Format email tidak valid.');
+    var harga = num(d.Harga), dp = num(d.DP); if (harga < 0 || dp < 0) throw salah('Harga dan DP tidak boleh negatif.');
+    var row = { Tab: tab };
+    FIELD_PESANAN.forEach(function (f) { row[f] = punya[f] ? (d[f] == null ? '' : d[f]) : ''; });
+    row.Nama = nama; row.Pax = punya.Pax ? pax : ''; row.Tgl_Mulai = mulai; row.Tgl_Selesai = punya.Tgl_Selesai ? sel : '';
+    row.No_HP = hp && hp !== '-' ? hp08(hp) : hp; row.Email = email; row.Harga = punya.Harga ? harga : ''; row.DP = punya.DP ? dp : '';
+    row.Tgl_Pesan = tgl(d.Tgl_Pesan) || (lama ? lama.Tgl_Pesan : tx.today());
+    if (punya.Total) row.Total = pax * harga; if (punya.Sisa) row.Sisa = pax * harga - dp;   // rumus asli di sheet tetap dipakai; ini nilai tampilan instan
+    if (punya.Setoran) row.Setoran = num(d.Setoran) || '';
+    var cek = {}, lain = {}, dc = d.Checklist || {}, dl = d.Lain || {};
+    Object.keys(labelCek).forEach(function (l) { cek[l] = str(dc[l]); });
+    Object.keys(labelLain).forEach(function (l) { lain[l] = str(dl[l]); });
+    row.Checklist = JSON.stringify(cek); row.Lain = JSON.stringify(lain);
     var hasil;
-    if (d.ID_Customer && tx.get('Customer', d.ID_Customer)) { hasil = tx.update('Customer', d.ID_Customer, row); tx.log('Ubah customer', 'Manifest & Customer', hasil.ID_Customer, nama); }
-    else { row.Status = 'Aktif'; row.Tgl_Terdaftar = tx.today(); hasil = tx.insert('Customer', row); tx.log('Tambah customer', 'Manifest & Customer', hasil.ID_Customer, nama); }
-    crmUpsertSatu(tx, 'customer', hasil);
-    return ok(hasil, 'Data customer tersimpan.');
+    if (lama) { hasil = tx.update('Pesanan', lama.ID_Pesanan, row); tx.log('Ubah pesanan', 'Pesanan', hasil.ID_Pesanan, tab + ' · ' + nama); }
+    else { row.Rumus = ''; row.H = ''; hasil = tx.insert('Pesanan', row); tx.log('Tambah pesanan', 'Pesanan', hasil.ID_Pesanan, tab + ' · ' + nama + ' · ' + pax + ' pax'); }
+    var inf = infoPesanan(hasil, tx.S());
+    if (rekapTerkunci(tx, hasil.ID_Pesanan)) tx.log('Peringatan: pesanan diubah setelah margin dikunci', 'Rekap', hasil.ID_Pesanan, 'Angka rekap terkunci tidak berubah');
+    crmUpsertPesanan(tx, hasil);
+    jobKalender(tx); jobRekapSheet(tx, inf);
+    if (lama) { var infL = infoPesanan(lama, tx.S()); if (infL.bulan !== inf.bulan) jobRekapSheet(tx, infL); }
+    return ok(hasil, (lama ? 'Perubahan' : 'Pesanan baru') + ' tersimpan ke Google Sheets · tab ' + tab + '.');
   };
-  A['customer.hapus'] = function (tx, d) {
-    var c = tx.get('Customer', d.id); if (!c) throw salah('Customer tidak ditemukan.');
-    var aktif = tx.where('Penjualan', function (p) { return p.ID_Customer === d.id && p.Status !== 'Batal' && p.Status !== 'Lunas'; }).length;
-    if (aktif && !d.paksa) throw salah('Customer masih punya ' + aktif + ' penjualan aktif. Batalkan dulu atau gunakan hapus paksa.');
-    tx.update('Customer', d.id, { Status: 'Dihapus', Diperbarui: tx.now() });
-    tx.log('Hapus customer (soft)', 'Manifest & Customer', d.id, c.Nama);
-    return ok({ id: d.id }, 'Customer dipindah ke arsip (soft delete).');
-  };
-  A['customer.pulihkan'] = function (tx, d) { tx.update('Customer', d.id, { Status: 'Aktif', Diperbarui: tx.now() }); tx.log('Pulihkan customer', 'Manifest & Customer', d.id, ''); return ok({ id: d.id }, 'Customer dipulihkan.'); };
-
-  // ---------- Trip (master) ----------
-  A['trip.simpan'] = function (tx, d) {
-    var nama = str(d.Nama), b = tgl(d.Tgl_Berangkat), p = tgl(d.Tgl_Pulang) || b;
-    if (!nama) throw salah('Nama trip wajib diisi.');
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(b)) throw salah('Tanggal berangkat wajib diisi.');
-    if (p < b) throw salah('Tanggal pulang tidak boleh sebelum tanggal berangkat.');
-    var kode = str(d.Kode).toUpperCase() || ('TRP-' + nama.replace(/[^A-Za-z]/g, '').slice(0, 3).toUpperCase() + '-' + b.slice(5, 7) + b.slice(2, 4));
-    if (tx.where('Trip', function (t) { return t.Kode === kode && t.ID_Trip !== d.ID_Trip; }).length) throw salah('Kode trip ' + kode + ' sudah dipakai.');
-    var row = { Kode: kode, Nama: nama, Tujuan: str(d.Tujuan), Tgl_Berangkat: b, Tgl_Pulang: p, Kuota: num(d.Kuota) || 0, Harga_Default: num(d.Harga_Default), Meeting_Point: str(d.Meeting_Point), Akomodasi: str(d.Akomodasi), Foto_URL: str(d.Foto_URL), Deskripsi: str(d.Deskripsi), Status: str(d.Status) || 'Open' };
-    var hasil, lama = d.ID_Trip ? tx.get('Trip', d.ID_Trip) : null;
-    if (lama) {
-      hasil = tx.update('Trip', d.ID_Trip, row);
-      if (lama.Tgl_Berangkat !== b || lama.Tgl_Pulang !== p || lama.Nama !== nama) tx.where('Penjualan', function (x) { return x.ID_Trip === d.ID_Trip && x.ID_Event; }).forEach(function (x) { jadwalkanEvent(tx, x); });
-      tx.log('Ubah trip', 'Budgeting & RAB', kode, nama);
-    } else {
-      row.Dibuat = tx.now(); hasil = tx.insert('Trip', row);
-      tx.job('TRIP_FOLDER', hasil.ID_Trip, {});
-      tx.log('Tambah trip', 'Budgeting & RAB', kode, nama);
-    }
-    recalcRekap(tx, hasil.ID_Trip);
-    return ok(hasil, 'Trip tersimpan.');
-  };
-  A['trip.hapus'] = function (tx, d) {
-    var t = tx.get('Trip', d.id); if (!t) throw salah('Trip tidak ditemukan.');
-    var n = tx.where('Penjualan', function (p) { return p.ID_Trip === d.id; }).length;
-    if (n) { tx.update('Trip', d.id, { Status: 'Batal' }); tx.log('Batalkan trip', 'Budgeting & RAB', t.Kode, n + ' penjualan terkait'); return ok({ id: d.id }, 'Trip punya penjualan, jadi statusnya diubah menjadi Batal.'); }
-    tx.where('Budget_Header', function (h) { return h.ID_Trip === d.id; }).forEach(function (h) { tx.where('Budget_Item', function (i) { return i.ID_Budget === h.ID_Budget; }).forEach(function (i) { tx.remove('Budget_Item', i.ID_Item); }); tx.remove('Budget_Header', h.ID_Budget); });
-    tx.remove('Rekap_Operasional', d.id); tx.remove('Trip', d.id); tx.log('Hapus trip', 'Budgeting & RAB', t.Kode, t.Nama);
-    return ok({ id: d.id }, 'Trip dihapus.');
+  A['pesanan.hapus'] = function (tx, d) {
+    var p = pesananAda(tx, d.id), inv = tx.where('Invoice', function (i) { return i.ID_Pesanan === p.ID_Pesanan && i.Status === 'Terbit'; });
+    if (inv.length && !d.paksa) throw salah('Pesanan ini sudah punya ' + inv.length + ' invoice terbit. Batalkan invoice dulu atau centang hapus paksa.');
+    if (rekapTerkunci(tx, p.ID_Pesanan) && !d.paksa) throw salah('Margin pesanan ini sudah dikunci Finance — data rekap tetap disimpan. Centang hapus paksa untuk tetap menghapus baris di sheet.');
+    var inf = infoPesanan(p, tx.S());
+    tx.remove('Pesanan', p.ID_Pesanan);
+    tx.where('Kalkulasi_Item', function (i) { return i.ID_Pesanan === p.ID_Pesanan; }).forEach(function (i) { tx.remove('Kalkulasi_Item', i.ID_Item); });
+    tx.remove('Kalkulasi', p.ID_Pesanan); tx.remove('Manifest', p.ID_Pesanan); tx.remove('Tagihan', p.ID_Pesanan);
+    if (!rekapTerkunci(tx, p.ID_Pesanan)) tx.remove('Rekap', p.ID_Pesanan);
+    jobKalender(tx); jobRekapSheet(tx, inf);
+    tx.log('Hapus pesanan (baris sheet)', 'Pesanan', p.ID_Pesanan, p.Tab + ' · ' + p.Nama);
+    return ok({ id: p.ID_Pesanan }, 'Baris pesanan dihapus dari Google Sheets.');
   };
 
-  // ---------- Penjualan ----------
-  A['penjualan.simpan'] = function (tx, d) {
-    var c = tx.get('Customer', d.ID_Customer); if (!c || c.Status === 'Dihapus') throw salah('Pilih customer yang valid.');
-    var t = tx.get('Trip', d.ID_Trip); if (!t || t.Status === 'Batal') throw salah('Pilih trip yang valid.');
-    var pax = Math.round(num(d.Jumlah_Pax)); if (pax < 1) throw salah('Jumlah pax minimal 1.');
-    var harga = num(d.Harga_per_Pax) || num(t.Harga_Default); if (harga <= 0) throw salah('Harga per pax wajib diisi.');
-    var diskon = Math.max(0, num(d.Diskon)), total = pax * harga - diskon; if (total <= 0) throw salah('Total harus lebih dari 0.');
-    var lama = d.ID_Penjualan ? tx.get('Penjualan', d.ID_Penjualan) : null;
-    var terisi = jumlah(tx.where('Penjualan', function (p) { return p.ID_Trip === t.ID_Trip && p.Status !== 'Batal' && p.ID_Penjualan !== d.ID_Penjualan; }), function (p) { return p.Jumlah_Pax; });
-    if (num(t.Kuota) && terisi + pax > num(t.Kuota) && !d.paksa) throw salah('Kuota trip tidak cukup: tersisa ' + Math.max(0, num(t.Kuota) - terisi) + ' dari ' + t.Kuota + ' pax.');
-    var row = { ID_Customer: c.ID_Customer, ID_Trip: t.ID_Trip, Jumlah_Pax: pax, Harga_per_Pax: harga, Diskon: diskon, Total: total, Jatuh_Tempo: tgl(d.Jatuh_Tempo), Catatan: str(d.Catatan), Diperbarui: tx.now() };
-    var hasil;
-    if (lama) {
-      if (lama.Status === 'Batal') throw salah('Penjualan sudah dibatalkan.');
-      var ditagih = jumlah(tx.where('Invoice', function (i) { return i.ID_Penjualan === lama.ID_Penjualan && i.Status !== 'Batal'; }), function (i) { return i.Nominal; });
-      if (total < num(lama.Terbayar)) throw salah('Total baru lebih kecil dari yang sudah dibayar (' + rp(lama.Terbayar) + ').');
-      if (total < ditagih) throw salah('Total baru lebih kecil dari total invoice terbit (' + rp(ditagih) + '). Batalkan invoice dulu.');
-      if (lama.ID_Trip !== t.ID_Trip && ditagih) throw salah('Trip tidak bisa diganti karena invoice sudah terbit.');
-      hasil = tx.update('Penjualan', lama.ID_Penjualan, row);
-      tx.where('Peserta_Trip', function (p) { return p.ID_Penjualan === lama.ID_Penjualan; }).forEach(function (p) { tx.update('Peserta_Trip', p.ID_Peserta, { Jumlah_Pax: pax, ID_Trip: t.ID_Trip }); });
-      recalcPenjualan(tx, hasil.ID_Penjualan);
-      if (hasil.ID_Event) jadwalkanEvent(tx, hasil);
-      tx.log('Ubah penjualan', 'Finansial & Invoice', hasil.ID_Penjualan, c.Nama + ' · ' + t.Nama + ' · ' + rp(total));
-      if (lama.ID_Trip !== t.ID_Trip) recalcRekap(tx, lama.ID_Trip);
-    } else {
-      row.Status = 'Booking'; row.Terbayar = 0; row.Sisa = total; row.Review_Peserta = 'TIDAK'; row.Tgl_Booking = tgl(d.Tgl_Booking) || tx.today(); row.Dibuat_Oleh = tx.user.nama;
-      hasil = tx.insert('Penjualan', row);
-      pastikanAnggotaUtama(tx, hasil);
-      tx.log('Catat penjualan', 'Finansial & Invoice', hasil.ID_Penjualan, c.Nama + ' · ' + t.Nama + ' · ' + pax + ' pax · ' + rp(total));
-      notif(tx, 'BOOKING_DIBUAT', penerimaCustomer(c), varsDasar(tx, { trip: t.Nama, tglTrip: rentangTgl(t.Tgl_Berangkat, t.Tgl_Pulang), pax: pax, total: rp(total) }), hasil.ID_Penjualan);
-    }
-    if (Array.isArray(d.anggota)) A['anggota.simpan'](tx, { ID_Penjualan: hasil.ID_Penjualan, anggota: d.anggota });
-    recalcRekap(tx, t.ID_Trip);
-    return ok(tx.get('Penjualan', hasil.ID_Penjualan), lama ? 'Penjualan diperbarui.' : 'Penjualan baru tercatat.');
-  };
-  A['penjualan.batal'] = function (tx, d) {
-    var pj = tx.get('Penjualan', d.id); if (!pj) throw salah('Penjualan tidak ditemukan.');
-    if (pj.Status === 'Batal') return ok(pj, 'Sudah dibatalkan.');
-    if (!str(d.alasan)) throw salah('Alasan pembatalan wajib diisi.');
-    tx.update('Penjualan', pj.ID_Penjualan, { Status: 'Batal', Catatan: (pj.Catatan ? pj.Catatan + ' | ' : '') + 'BATAL: ' + str(d.alasan), Diperbarui: tx.now() });
-    tx.where('Invoice', function (i) { return i.ID_Penjualan === pj.ID_Penjualan && i.Status !== 'Lunas'; }).forEach(function (i) { tx.update('Invoice', i.No_Invoice, { Status: 'Batal' }); });
-    tx.where('Peserta_Trip', function (p) { return p.ID_Penjualan === pj.ID_Penjualan; }).forEach(function (p) { tx.remove('Peserta_Trip', p.ID_Peserta); });
-    if (pj.ID_Event) tx.job('CAL_HAPUS', pj.ID_Penjualan, { eventId: pj.ID_Event });
-    recalcRekap(tx, pj.ID_Trip);
-    tx.log('Batalkan penjualan', 'Finansial & Invoice', pj.ID_Penjualan, str(d.alasan));
-    return ok(tx.get('Penjualan', pj.ID_Penjualan), 'Penjualan dibatalkan.');
-  };
-  A['penjualan.review'] = function (tx, d) {
-    var pj = tx.get('Penjualan', d.id); if (!pj) throw salah('Penjualan tidak ditemukan.');
-    var ya = d.nilai !== false && d.nilai !== 'TIDAK';
-    if (ya) pastikanPeserta(tx, pj);
-    tx.update('Penjualan', pj.ID_Penjualan, { Review_Peserta: ya ? 'YA' : 'TIDAK', Diperbarui: tx.now() });
-    tx.where('Peserta_Trip', function (p) { return p.ID_Penjualan === pj.ID_Penjualan; }).forEach(function (p) { tx.update('Peserta_Trip', p.ID_Peserta, { Status_Data: ya ? 'Terverifikasi' : 'Sudah Masuk' }); });
-    tx.log(ya ? 'Review peserta: sudah masuk daftar' : 'Review peserta dibatalkan', 'Manifest & Customer', pj.ID_Penjualan, '');
-    return ok(tx.get('Penjualan', pj.ID_Penjualan), ya ? 'Ditandai sudah masuk daftar peserta trip.' : 'Penanda review dihapus.');
-  };
-  A['anggota.simpan'] = function (tx, d) {
-    var pj = tx.get('Penjualan', d.ID_Penjualan); if (!pj) throw salah('Penjualan tidak ditemukan.');
-    var masuk = (d.anggota || []).filter(function (a) { return str(a.Nama); });
-    if (masuk.length > num(pj.Jumlah_Pax)) throw salah('Jumlah anggota (' + masuk.length + ') melebihi pax (' + pj.Jumlah_Pax + ').');
-    var mnf = tx.where('Manifest', function (m) { return m.ID_Penjualan === pj.ID_Penjualan && m.Tipe === 'Per Customer'; })[0];
-    if (mnf && mnf.Status === 'Final' && !d.paksa) throw salah('Manifest sudah Final. Buka revisi manifest dulu untuk mengubah data rombongan.');
-    var lama = tx.where('Anggota_Rombongan', function (a) { return a.ID_Penjualan === pj.ID_Penjualan; }), dipakai = {};
-    masuk.forEach(function (a, i) {
-      var row = { ID_Penjualan: pj.ID_Penjualan, ID_Customer: pj.ID_Customer, Nama: str(a.Nama), Identitas: str(a.Identitas), Gender: str(a.Gender), Tgl_Lahir: tgl(a.Tgl_Lahir), No_HP: hp08(a.No_HP), Ukuran_Baju: str(a.Ukuran_Baju), Kamar: str(a.Kamar), Catatan: str(a.Catatan), Urutan: i + 1 };
-      if (a.ID_Anggota && tx.get('Anggota_Rombongan', a.ID_Anggota)) { tx.update('Anggota_Rombongan', a.ID_Anggota, row); dipakai[a.ID_Anggota] = 1; }
-      else { var r = tx.insert('Anggota_Rombongan', row); dipakai[r.ID_Anggota] = 1; }
+  // ---------- Kalkulasi budget ----------
+  A['kalkulasi.simpan'] = function (tx, d) {
+    var p = pesananAda(tx, d.ID_Pesanan), S = tx.S(), inf = infoPesanan(p, S), b = inf.bagian;
+    if (rekapTerkunci(tx, p.ID_Pesanan)) throw salah('Margin trip ini sudah dikunci Finance. Minta Finance membuka kunci dulu.');
+    var pax = Math.round(num(d.Pax)) || inf.pax || 1;
+    var items = (d.items || []).filter(function (i) { return str(i.Uraian); });
+    if (!items.length) throw salah('Isi minimal satu item kalkulasi.');
+    if (items.length > 120) throw salah('Maksimal 120 item per kalkulasi.');
+    tx.where('Kalkulasi_Item', function (i) { return i.ID_Pesanan === p.ID_Pesanan; }).forEach(function (i) { tx.remove('Kalkulasi_Item', i.ID_Item); });
+    var now = tx.now(), totTL = 0, tot = 0;
+    items.forEach(function (it, n) {
+      var tetap = num(it.Tetap), perPax = num(it.Per_Pax), budget = Math.round(tetap + perPax * pax);
+      if (budget < 0) throw salah('Budget "' + str(it.Uraian) + '" tidak boleh negatif.');
+      var keTL = it.Ke_TL === 'YA' || it.Ke_TL === true ? 'YA' : 'TIDAK';
+      var grup = keTL === 'YA' ? (GRUP_TL.indexOf(it.Grup) > -1 ? it.Grup : tebakGrup(it.Uraian)) : '';
+      var kolom = kolomValid(b, it.Kolom) || tebakKolom(b, it.Uraian, grup);
+      var terima = keTL === 'YA' ? (it.Terima_TL === '' || it.Terima_TL == null ? budget : Math.max(0, Math.round(num(it.Terima_TL)))) : 0;
+      tx.insert('Kalkulasi_Item', { ID_Pesanan: p.ID_Pesanan, Uraian: str(it.Uraian).toUpperCase(), Tetap: tetap, Per_Pax: perPax, Budget: budget, Terima_TL: terima, Ke_TL: keTL, Grup: grup, Kolom: kolom, Asal: str(it.Asal) || 'Manual', Urutan: n + 1 });
+      var kp = kunciPeta(b, it.Uraian), m = { Kunci: kp, Uraian: str(it.Uraian).toUpperCase(), Bagian: b, Ke_TL: keTL, Grup: grup, Kolom: kolom, Diperbarui: now };
+      if (tx.get('Peta_Item', kp)) tx.update('Peta_Item', kp, m); else tx.insert('Peta_Item', m);   // diingat untuk kalkulasi berikutnya
+      tot += budget; if (keTL === 'YA') totTL += budget;
     });
-    lama.forEach(function (a) { if (!dipakai[a.ID_Anggota]) tx.remove('Anggota_Rombongan', a.ID_Anggota); });
-    if (mnf) tx.update('Manifest', mnf.ID_Manifest, { Diperbarui: tx.now() });
-    tx.log('Ubah data rombongan', 'Manifest & Customer', pj.ID_Penjualan, masuk.length + '/' + pj.Jumlah_Pax + ' pax');
-    return ok({ jumlah: masuk.length }, 'Data rombongan tersimpan (' + masuk.length + '/' + pj.Jumlah_Pax + ').');
+    var k = { ID_Pesanan: p.ID_Pesanan, Sumber: ['CS', 'Paket', 'Manual'].indexOf(d.Sumber) > -1 ? d.Sumber : 'Manual', Link_CS: str(d.Link_CS), Pax: pax, Paket: str(d.Paket), Catatan: str(d.Catatan), Diperbarui: now };
+    if (tx.get('Kalkulasi', p.ID_Pesanan)) tx.update('Kalkulasi', p.ID_Pesanan, k); else { k.Dibuat_Oleh = tx.user.nama; tx.insert('Kalkulasi', k); }
+    if (d.simpanPaket) A['paket.simpan'](tx, { Nama: str(d.namaPaket) || str(p.Trip), Bagian: b, items: items, Catatan: 'Dari kalkulasi ' + p.Nama });
+    var mnf = tx.get('Manifest', p.ID_Pesanan); if (mnf && mnf.Status === 'Terbit') tx.update('Manifest', p.ID_Pesanan, { Status: 'Berubah', Diperbarui: now });
+    jobRekapSheet(tx, inf);
+    tx.log('Simpan kalkulasi budget', 'Kalkulasi', p.ID_Pesanan, p.Nama + ' · ' + items.length + ' item · ' + rp(tot) + ' (ke TL ' + rp(totTL) + ')');
+    return ok({ total: tot, totalTL: totTL }, 'Kalkulasi tersimpan · total ' + rp(tot) + ' · masuk manifest TL ' + rp(totTL) + '.');
   };
-
-  // ---------- Pembayaran ----------
-  A['pembayaran.simpan'] = function (tx, d) {
-    var pj = tx.get('Penjualan', d.ID_Penjualan); if (!pj) throw salah('Penjualan tidak ditemukan.');
-    if (pj.Status === 'Batal') throw salah('Penjualan sudah dibatalkan.');
-    var nominal = bulat(d.Nominal); if (nominal <= 0) throw salah('Nominal pembayaran harus lebih dari 0.');
-    var lama = d.ID_Bayar ? tx.get('Pembayaran', d.ID_Bayar) : null;
-    var sudah = jumlah(tx.where('Pembayaran', function (b) { return b.ID_Penjualan === pj.ID_Penjualan && b.Status_Verifikasi !== 'Ditolak' && b.ID_Bayar !== d.ID_Bayar; }), function (b) { return b.Nominal; });
-    if (sudah + nominal > num(pj.Total) && !d.paksa) throw salah('Nominal melebihi sisa tagihan (' + rp(Math.max(0, num(pj.Total) - sudah)) + ').');
-    var jenis = str(d.Jenis) || (sudah === 0 ? (nominal >= num(pj.Total) ? 'Pelunasan' : 'DP') : (sudah + nominal >= num(pj.Total) ? 'Pelunasan' : 'Cicilan'));
-    var row = { ID_Penjualan: pj.ID_Penjualan, Jenis: jenis, Tanggal: tgl(d.Tanggal) || tx.today(), Nominal: nominal, Metode: str(d.Metode) || 'Transfer', Link_Bukti: str(d.Link_Bukti), Status_Verifikasi: str(d.Status_Verifikasi) || 'Terverifikasi', Catatan: str(d.Catatan) };
-    if (row.Status_Verifikasi === 'Terverifikasi') row.Diverifikasi_Oleh = tx.user.nama;
-    var b;
-    if (lama) b = tx.update('Pembayaran', lama.ID_Bayar, row); else { row.Dibuat_Oleh = tx.user.nama; row.Dibuat = tx.now(); b = tx.insert('Pembayaran', row); }
-    var rc = recalcPenjualan(tx, pj.ID_Penjualan);
-    if (rc.pj.ID_Event) jadwalkanEvent(tx, rc.pj);
-    recalcRekap(tx, pj.ID_Trip);
-    var c = tx.get('Customer', pj.ID_Customer) || {}, t = tx.get('Trip', pj.ID_Trip) || {};
-    if (!lama && b.Status_Verifikasi === 'Terverifikasi') notifPembayaran(tx, b, rc, c, t);
-    tx.log(lama ? 'Ubah pembayaran' : 'Input pembayaran', 'Finansial & Invoice', b.ID_Bayar, c.Nama + ' · ' + jenis + ' ' + rp(nominal) + ' · ' + row.Metode);
-    return ok(b, rc.baru === 'Lunas' && rc.lama !== 'Lunas' ? 'Pembayaran tercatat — booking LUNAS 🎉' : 'Pembayaran tercatat. Sisa ' + rp(rc.sisa) + '.');
+  A['kalkulasi.hapus'] = function (tx, d) {
+    var id = str(d.id); if (rekapTerkunci(tx, id)) throw salah('Margin sudah dikunci Finance.');
+    tx.where('Kalkulasi_Item', function (i) { return i.ID_Pesanan === id; }).forEach(function (i) { tx.remove('Kalkulasi_Item', i.ID_Item); });
+    tx.remove('Kalkulasi', id); var p = tx.get('Pesanan', id); if (p) jobRekapSheet(tx, infoPesanan(p, tx.S()));
+    tx.log('Hapus kalkulasi', 'Kalkulasi', id, ''); return ok({ id: id }, 'Kalkulasi dihapus.');
   };
-  function notifPembayaran(tx, b, rc, c, t) {
-    var v = varsDasar(tx, { trip: t.Nama, nominal: rp(b.Nominal), jenisBayar: b.Jenis, terbayar: rp(rc.bayar), sisa: rp(rc.sisa), meetingPoint: t.Meeting_Point || '-', tglTrip: rentangTgl(t.Tgl_Berangkat, t.Tgl_Pulang), customer: c.Nama, metode: b.Metode, oleh: tx.user.nama });
-    if (rc.baru === 'Lunas' && rc.lama !== 'Lunas') notif(tx, 'LUNAS', penerimaCustomer(c), v, rc.pj.ID_Penjualan);
-    else notif(tx, 'PEMBAYARAN_DITERIMA', penerimaCustomer(c), v, b.ID_Bayar);
-    penerimaTim(tx, 'Finance').forEach(function (p) { notif(tx, 'TIM_PEMBAYARAN_MASUK', p, v, b.ID_Bayar); });
-  }
-  A['pembayaran.verifikasi'] = function (tx, d) {
-    var b = tx.get('Pembayaran', d.id); if (!b) throw salah('Pembayaran tidak ditemukan.');
-    var st = d.status === 'Ditolak' ? 'Ditolak' : 'Terverifikasi', sebelum = b.Status_Verifikasi;
-    tx.update('Pembayaran', b.ID_Bayar, { Status_Verifikasi: st, Diverifikasi_Oleh: tx.user.nama, Catatan: d.catatan ? str(d.catatan) : b.Catatan });
-    var pj = tx.get('Penjualan', b.ID_Penjualan), rc = recalcPenjualan(tx, b.ID_Penjualan);
-    if (rc.pj.ID_Event) jadwalkanEvent(tx, rc.pj);
-    recalcRekap(tx, pj.ID_Trip);
-    if (st === 'Terverifikasi' && sebelum !== 'Terverifikasi') notifPembayaran(tx, tx.get('Pembayaran', b.ID_Bayar), rc, tx.get('Customer', pj.ID_Customer) || {}, tx.get('Trip', pj.ID_Trip) || {});
-    tx.log('Verifikasi pembayaran: ' + st, 'Finansial & Invoice', b.ID_Bayar, rp(b.Nominal));
-    return ok(tx.get('Pembayaran', b.ID_Bayar), 'Pembayaran ' + st.toLowerCase() + '.');
-  };
-  A['pembayaran.hapus'] = function (tx, d) {
-    var b = tx.get('Pembayaran', d.id); if (!b) throw salah('Pembayaran tidak ditemukan.');
-    var pj = tx.get('Penjualan', b.ID_Penjualan); tx.remove('Pembayaran', b.ID_Bayar);
-    var rc = recalcPenjualan(tx, b.ID_Penjualan); if (rc && rc.pj.ID_Event) jadwalkanEvent(tx, rc.pj);
-    if (pj) recalcRekap(tx, pj.ID_Trip);
-    tx.log('Hapus pembayaran', 'Finansial & Invoice', b.ID_Bayar, rp(b.Nominal));
-    return ok({ id: d.id }, 'Pembayaran dihapus.');
-  };
-
-  // ---------- Invoice ----------
-  function nominalInvoiceDefault(tx, pj, jenis) {
-    var S = tx.S(), total = num(pj.Total);
-    var ditagih = jumlah(tx.where('Invoice', function (i) { return i.ID_Penjualan === pj.ID_Penjualan && i.Status !== 'Batal'; }), function (i) { return i.Nominal; });
-    if (jenis === 'DP') return Math.max(0, Math.min(Math.round(total * num(S.DP_PERSEN || 50) / 100), total - ditagih));
-    if (jenis === 'Full') return total - ditagih;
-    return Math.max(0, total - Math.max(ditagih, num(pj.Terbayar)));
-  }
-  A['invoice.buat'] = function (tx, d) {
-    var pj = tx.get('Penjualan', d.ID_Penjualan); if (!pj) throw salah('Pilih penjualan terlebih dahulu.');
-    if (pj.Status === 'Batal') throw salah('Penjualan sudah dibatalkan.');
-    var jenis = ['DP', 'Pelunasan', 'Full'].indexOf(d.Jenis) > -1 ? d.Jenis : 'DP';
-    var invs = tx.where('Invoice', function (i) { return i.ID_Penjualan === pj.ID_Penjualan && i.Status !== 'Batal'; });
-    // Aman diulang: invoice terbuka dengan jenis sama → kembalikan yang ada (tanpa nomor/event ganda)
-    var kembar = invs.filter(function (i) { return i.Jenis === jenis && i.Status === 'Terbit'; })[0];
-    if (kembar && !d.paksaBaru) return ok({ invoice: kembar, ulang: true }, 'Invoice ' + kembar.No_Invoice + ' untuk tagihan ini sudah ada — tidak dibuat ganda.');
-    if (jenis === 'Full' && invs.length) throw salah('Invoice Full hanya untuk penjualan yang belum pernah ditagih. Gunakan jenis Pelunasan.');
-    var ditagih = jumlah(invs, function (i) { return i.Nominal; });
-    var nominal = d.Nominal ? bulat(d.Nominal) : nominalInvoiceDefault(tx, pj, jenis);
-    if (nominal <= 0) throw salah('Tidak ada sisa tagihan untuk ditagihkan.');
-    if (ditagih + nominal > num(pj.Total)) throw salah('Nominal melebihi sisa yang belum ditagih (' + rp(num(pj.Total) - ditagih) + ').');
-    var S = tx.S(), t = tx.get('Trip', pj.ID_Trip) || {}, c = tx.get('Customer', pj.ID_Customer) || {};
-    var terbit = tgl(d.Tgl_Terbit) || tx.today();
-    var jt = tgl(d.Jatuh_Tempo);
-    if (!jt) {
-      if (jenis === 'Pelunasan') { jt = t.Tgl_Berangkat ? tambahHari(t.Tgl_Berangkat, -3) : tambahHari(terbit, 7); if (jt < terbit) jt = terbit; }
-      else jt = tambahHari(terbit, num(S.JATUH_TEMPO_HARI || 3));
-    }
-    var no = nomorInvoiceBaru(tx, terbit);
-    var kirim = d.kirim !== false;
-    var inv = tx.insert('Invoice', { No_Invoice: no, ID_Penjualan: pj.ID_Penjualan, Jenis: jenis, Tgl_Terbit: terbit, Jatuh_Tempo: jt, Nominal: nominal, Status: 'Terbit', Kode_Verifikasi: kodeVerif(tx),
-      Status_Proses: JSON.stringify({ pdf: 'antri', cal: 'antri', kirim: kirim ? 'antri' : 'lewati' }), Catatan: str(d.Catatan), ID_Event_Calendar: pj.ID_Event || '', Dibuat_Oleh: tx.user.nama, Dibuat: tx.now() });
-    if (!pj.Jatuh_Tempo || pj.Jatuh_Tempo !== jt) tx.update('Penjualan', pj.ID_Penjualan, { Jatuh_Tempo: jt });
-    pastikanPeserta(tx, pj); pastikanManifest(tx, pj); pastikanAnggotaUtama(tx, pj);
-    recalcPenjualan(tx, pj.ID_Penjualan);
-    var jPdf = tx.job('INVOICE_PDF', no, {});
-    var jCal = jadwalkanEvent(tx, pj, [jPdf]);
-    if (kirim) tx.job('INVOICE_KIRIM', no, { email: d.email !== false, wa: d.wa !== false }, [jPdf]);
-    penerimaTim(tx, 'Finance').forEach(function (p) { notif(tx, 'TIM_INVOICE_TERBIT', p, varsDasar(tx, { noInvoice: no, jenis: jenis, nominal: rp(nominal), customer: c.Nama, trip: t.Nama, oleh: tx.user.nama }), no); });
-    tx.log('Invoice terbit', 'Finansial & Invoice', no, c.Nama + ' · ' + jenis + ' ' + rp(nominal));
-    recalcRekap(tx, pj.ID_Trip);
-    return ok({ invoice: tx.get('Invoice', no), jobs: [jPdf, jCal] }, 'Invoice ' + no + ' terbit. PDF, event Calendar & pengiriman diproses…');
-  };
-  A['invoice.batal'] = function (tx, d) {
-    var inv = tx.get('Invoice', d.no); if (!inv) throw salah('Invoice tidak ditemukan.');
-    if (inv.Status === 'Lunas') throw salah('Invoice lunas tidak bisa dibatalkan.');
-    if (!str(d.alasan)) throw salah('Alasan pembatalan wajib diisi.');
-    tx.update('Invoice', inv.No_Invoice, { Status: 'Batal', Catatan: 'BATAL: ' + str(d.alasan) });
-    var pj = tx.get('Penjualan', inv.ID_Penjualan); recalcPenjualan(tx, inv.ID_Penjualan); if (pj && pj.ID_Event) jadwalkanEvent(tx, pj);
-    tx.log('Batalkan invoice', 'Finansial & Invoice', inv.No_Invoice, str(d.alasan));
-    return ok(tx.get('Invoice', inv.No_Invoice), 'Invoice dibatalkan. Nomornya tetap tercatat (tidak dipakai ulang).');
-  };
-  A['invoice.kirimUlang'] = function (tx, d) {
-    var inv = tx.get('Invoice', d.no); if (!inv) throw salah('Invoice tidak ditemukan.');
-    var st = prosesInvoice(inv); st.kirim = 'antri'; tx.update('Invoice', inv.No_Invoice, { Status_Proses: JSON.stringify(st) });
-    var dep = st.pdf === 'ok' ? [] : [tx.job('INVOICE_PDF', inv.No_Invoice, {})];
-    tx.job('INVOICE_KIRIM', inv.No_Invoice, { email: d.email !== false, wa: d.wa !== false }, dep);
-    tx.log('Kirim ulang invoice', 'Finansial & Invoice', inv.No_Invoice, '');
-    return ok(inv, 'Invoice dijadwalkan untuk dikirim ulang.');
-  };
-  A['invoice.prosesUlang'] = function (tx, d) {
-    var inv = tx.get('Invoice', d.no); if (!inv) throw salah('Invoice tidak ditemukan.');
-    var pj = tx.get('Penjualan', inv.ID_Penjualan), st = prosesInvoice(inv);
-    st.pdf = 'antri'; st.cal = 'antri'; tx.update('Invoice', inv.No_Invoice, { Status_Proses: JSON.stringify(st) });
-    var j = tx.job('INVOICE_PDF', inv.No_Invoice, {}); jadwalkanEvent(tx, pj, [j]);
-    tx.log('Proses ulang invoice', 'Finansial & Invoice', inv.No_Invoice, 'PDF & Calendar');
-    return ok(inv, 'PDF & event Calendar diproses ulang (event lama diperbarui, tidak dibuat ganda).');
-  };
-
-  // ---------- Budget berversi ----------
-  function hitungTotalBudget(tx, idB) { var t = jumlah(tx.where('Budget_Item', function (i) { return i.ID_Budget === idB; }), function (i) { return i.Subtotal; }); tx.update('Budget_Header', idB, { Total: t }); return t; }
-  A['budget.buat'] = function (tx, d) {
-    var t = tx.get('Trip', d.ID_Trip); if (!t) throw salah('Trip tidak ditemukan.');
-    var ada = tx.where('Budget_Header', function (h) { return h.ID_Trip === t.ID_Trip; });
-    if (ada.some(function (h) { return h.Status === 'Draft' || h.Status === 'Menunggu' || h.Status === 'Ditolak'; })) throw salah('Masih ada versi draft/menunggu. Selesaikan dulu.');
-    if (ada.some(function (h) { return h.Status === 'Aktif'; })) return A['budget.revisi'](tx, { ID_Trip: t.ID_Trip, alasan: d.alasan || 'Revisi' });
-    var h = tx.insert('Budget_Header', { ID_Trip: t.ID_Trip, Versi: 1, Status: 'Draft', Total: 0, Alasan_Revisi: str(d.alasan) || 'Budget awal', Dibuat_Oleh: tx.user.nama, Tgl_Dibuat: tx.now() });
-    if (Array.isArray(d.items) && d.items.length) A['budget.simpanItem'](tx, { ID_Budget: h.ID_Budget, items: d.items });
-    tx.log('Buat budget v1', 'Budgeting & RAB', t.Kode, t.Nama);
-    return ok(tx.get('Budget_Header', h.ID_Budget), 'Draft budget v1 dibuat.');
-  };
-  A['budget.revisi'] = function (tx, d) {
-    var t = tx.get('Trip', d.ID_Trip); if (!t) throw salah('Trip tidak ditemukan.');
-    var hs = tx.where('Budget_Header', function (h) { return h.ID_Trip === t.ID_Trip; });
-    var terbuka = hs.filter(function (h) { return h.Status === 'Draft' || h.Status === 'Menunggu' || h.Status === 'Ditolak'; })[0];
-    if (terbuka) throw salah('Versi ' + terbuka.Versi + ' masih ' + terbuka.Status + '. Selesaikan atau hapus dulu.');
-    var aktif = null; hs.forEach(function (h) { if (h.Status === 'Aktif') aktif = h; });
-    if (!aktif) throw salah('Belum ada versi aktif untuk direvisi.');
-    if (!str(d.alasan)) throw salah('Alasan pengajuan perubahan RAB wajib diisi.');
-    var stR = normRls((tx.get('Rekap_Operasional', t.ID_Trip) || {}).Status_Audit);
-    if (stR === RLS.DIAJUKAN) throw salah('Laporan realisasi trip ini sedang diaudit Finance — RAB tidak bisa diubah dulu.');
-    if (stR === RLS.FINAL) throw salah('Realisasi trip ini sudah final disetujui Finance — RAB terkunci permanen.');
-    var mx = 0; hs.forEach(function (h) { mx = Math.max(mx, num(h.Versi)); });
-    var h = tx.insert('Budget_Header', { ID_Trip: t.ID_Trip, Versi: mx + 1, Status: 'Draft', Total: aktif.Total, Alasan_Revisi: str(d.alasan), Dibuat_Oleh: tx.user.nama, Tgl_Dibuat: tx.now() });
-    // Salin item dari versi aktif → admin cukup mengubah item yang berubah
-    tx.where('Budget_Item', function (i) { return i.ID_Budget === aktif.ID_Budget; }).forEach(function (i) {
-      tx.insert('Budget_Item', { ID_Budget: h.ID_Budget, Kategori: i.Kategori, Uraian: i.Uraian, Keterangan: i.Keterangan, Qty: i.Qty, Satuan: i.Satuan, Harga_Satuan: i.Harga_Satuan, Subtotal: i.Subtotal, Urutan: i.Urutan });
+  A['paket.simpan'] = function (tx, d) {
+    var nama = str(d.Nama); if (!nama) throw salah('Nama paket wajib diisi.');
+    var bagian = d.Bagian === 'SB' ? 'SB' : 'YB';
+    var items = (d.items || []).filter(function (i) { return str(i.Uraian); }).map(function (i) {
+      var keTL = i.Ke_TL === 'YA' || i.Ke_TL === true ? 'YA' : 'TIDAK', grup = keTL === 'YA' ? (GRUP_TL.indexOf(i.Grup) > -1 ? i.Grup : tebakGrup(i.Uraian)) : '';
+      return { Uraian: str(i.Uraian).toUpperCase(), Tetap: num(i.Tetap), Per_Pax: num(i.Per_Pax), Ke_TL: keTL, Grup: grup, Kolom: kolomValid(bagian, i.Kolom) || tebakKolom(bagian, i.Uraian, grup) };
     });
-    tx.log('Buat revisi budget v' + (mx + 1), 'Budgeting & RAB', t.Kode, str(d.alasan));
-    return ok(tx.get('Budget_Header', h.ID_Budget), 'Draft perubahan RAB v' + (mx + 1) + ' dibuat dari versi aktif v' + aktif.Versi + '. Perbaiki item, lalu ajukan ke Finance — v' + aktif.Versi + ' tetap berlaku sampai disetujui.');
+    if (!items.length) throw salah('Paket harus berisi minimal satu item.');
+    var ada = d.ID_Paket ? tx.get('Paket_Kalkulasi', d.ID_Paket) : tx.where('Paket_Kalkulasi', function (x) { return normalHeader(x.Nama) === normalHeader(nama) && x.Bagian === bagian; })[0];
+    var row = { Nama: nama, Bagian: bagian, Item: JSON.stringify(items), Catatan: str(d.Catatan), Diperbarui: tx.now() }, h;
+    if (ada) h = tx.update('Paket_Kalkulasi', ada.ID_Paket, row); else h = tx.insert('Paket_Kalkulasi', row);
+    tx.log(ada ? 'Ubah paket kalkulasi' : 'Tambah paket kalkulasi', 'Kalkulasi', h.ID_Paket, nama + ' · ' + items.length + ' item');
+    return ok(h, 'Paket "' + nama + '" tersimpan — dipakai otomatis untuk pesanan dengan nama trip yang sama.');
   };
-  A['budget.simpanItem'] = function (tx, d) {
-    var h = tx.get('Budget_Header', d.ID_Budget); if (!h) throw salah('Budget tidak ditemukan.');
-    if (['Draft', 'Ditolak'].indexOf(h.Status) < 0) throw salah('Budget versi ' + h.Versi + ' berstatus ' + h.Status + ' sehingga terkunci. Buat revisi baru.');
-    var lama = tx.where('Budget_Item', function (i) { return i.ID_Budget === h.ID_Budget; }), dipakai = {};
-    (d.items || []).forEach(function (it, idx) {
-      if (!str(it.Uraian)) return;
-      var qty = num(it.Qty), harga = num(it.Harga_Satuan);
-      if (qty < 0 || harga < 0) throw salah('Qty dan harga tidak boleh negatif (' + it.Uraian + ').');
-      var row = { ID_Budget: h.ID_Budget, Kategori: str(it.Kategori) || 'Lain-lain', Uraian: str(it.Uraian), Keterangan: str(it.Keterangan), Qty: qty, Satuan: str(it.Satuan) || 'Unit', Harga_Satuan: harga, Subtotal: Math.round(qty * harga), Urutan: idx + 1 };
-      if (it.ID_Item && tx.get('Budget_Item', it.ID_Item) && tx.get('Budget_Item', it.ID_Item).ID_Budget === h.ID_Budget) { tx.update('Budget_Item', it.ID_Item, row); dipakai[it.ID_Item] = 1; }
-      else { var r = tx.insert('Budget_Item', row); dipakai[r.ID_Item] = 1; }
-    });
-    lama.forEach(function (i) { if (!dipakai[i.ID_Item]) tx.remove('Budget_Item', i.ID_Item); });
-    var tot = hitungTotalBudget(tx, h.ID_Budget);
-    if (h.Status === 'Ditolak') tx.update('Budget_Header', h.ID_Budget, { Status: 'Draft' });
-    tx.log('Simpan item budget v' + h.Versi, 'Budgeting & RAB', h.ID_Budget, Object.keys(dipakai).length + ' item · ' + rp(tot));
-    return ok(tx.get('Budget_Header', h.ID_Budget), 'Item budget tersimpan. Total ' + rp(tot) + '.');
-  };
-  A['budget.ajukan'] = function (tx, d) {
-    var h = tx.get('Budget_Header', d.ID_Budget); if (!h) throw salah('Budget tidak ditemukan.');
-    if (h.Status !== 'Draft' && h.Status !== 'Ditolak') throw salah('Hanya draft yang bisa diajukan.');
-    if (!tx.where('Budget_Item', function (i) { return i.ID_Budget === h.ID_Budget; }).length) throw salah('Budget masih kosong.');
-    tx.update('Budget_Header', h.ID_Budget, { Status: 'Menunggu' });
-    var t = tx.get('Trip', h.ID_Trip) || {};
-    penerimaTim(tx, 'Finance').forEach(function (p) { notif(tx, 'TIM_BUDGET_MENUNGGU', p, varsDasar(tx, { trip: t.Nama, versi: h.Versi, total: rp(h.Total), oleh: tx.user.nama, alasan: h.Alasan_Revisi }), h.ID_Budget); });
-    tx.log('Ajukan budget v' + h.Versi, 'Budgeting & RAB', t.Kode, rp(h.Total));
-    return ok(tx.get('Budget_Header', h.ID_Budget), 'Budget v' + h.Versi + ' diajukan ke Finance.');
-  };
-  A['budget.setujui'] = function (tx, d) {
-    var h = tx.get('Budget_Header', d.ID_Budget); if (!h) throw salah('Budget tidak ditemukan.');
-    if (h.Status !== 'Menunggu') throw salah('Hanya budget berstatus Menunggu yang bisa disetujui.');
-    var lama = tx.where('Budget_Header', function (x) { return x.ID_Trip === h.ID_Trip && x.Status === 'Aktif'; })[0];
-    var t = tx.get('Trip', h.ID_Trip) || {}, now = tx.now();
-    // Catat perbedaan item terhadap versi aktif sebelumnya
-    var baru = tx.where('Budget_Item', function (i) { return i.ID_Budget === h.ID_Budget; });
-    var sebelum = lama ? tx.where('Budget_Item', function (i) { return i.ID_Budget === lama.ID_Budget; }) : [];
-    var mb = {}; sebelum.forEach(function (i) { mb[kunciItem(i)] = i; });
-    var jml = 0;
-    function fmt(i) { return i ? (i.Qty + ' ' + i.Satuan + ' × ' + rp(i.Harga_Satuan) + ' = ' + rp(i.Subtotal)) : '—'; }
-    baru.forEach(function (i) { var o = mb[kunciItem(i)]; delete mb[kunciItem(i)]; if (!o || num(o.Subtotal) !== num(i.Subtotal) || num(o.Qty) !== num(i.Qty) || num(o.Harga_Satuan) !== num(i.Harga_Satuan)) { jml++; tx.insert('Log_Revisi_Budget', { ID_Budget: h.ID_Budget, ID_Trip: h.ID_Trip, Siapa: h.Dibuat_Oleh, Kapan: now, Item: i.Kategori + ' — ' + i.Uraian, Nilai_Lama: fmt(o), Nilai_Baru: fmt(i), Alasan: h.Alasan_Revisi }); } });
-    Object.keys(mb).forEach(function (k) { jml++; var o = mb[k]; tx.insert('Log_Revisi_Budget', { ID_Budget: h.ID_Budget, ID_Trip: h.ID_Trip, Siapa: h.Dibuat_Oleh, Kapan: now, Item: o.Kategori + ' — ' + o.Uraian, Nilai_Lama: fmt(o), Nilai_Baru: 'Dihapus', Alasan: h.Alasan_Revisi }); });
-    tx.insert('Log_Revisi_Budget', { ID_Budget: h.ID_Budget, ID_Trip: h.ID_Trip, Siapa: tx.user.nama, Kapan: now, Item: 'TOTAL BUDGET (v' + h.Versi + ' disetujui)', Nilai_Lama: lama ? rp(lama.Total) + ' (v' + lama.Versi + ')' : '—', Nilai_Baru: rp(h.Total), Alasan: str(d.catatan) || h.Alasan_Revisi });
-    if (lama) tx.update('Budget_Header', lama.ID_Budget, { Status: 'Digantikan' });
-    tx.update('Budget_Header', h.ID_Budget, { Status: 'Aktif', Disetujui_Oleh: tx.user.nama, Tgl_Disetujui: now, Catatan_Keputusan: str(d.catatan) });
-    recalcRekap(tx, h.ID_Trip);
-    var pembuat = tx.where('Pengguna', function (u) { return u.Nama === h.Dibuat_Oleh; })[0];
-    if (pembuat) notif(tx, 'TIM_BUDGET_DIPUTUSKAN', { nama: pembuat.Nama, hp: pembuat.No_WA, email: pembuat.Email }, varsDasar(tx, { trip: t.Nama, versi: h.Versi, keputusan: 'DISETUJUI', oleh: tx.user.nama, catatan: str(d.catatan) }), h.ID_Budget);
-    tx.log('Setujui & aktifkan budget v' + h.Versi, 'Budgeting & RAB', t.Kode, rp(h.Total) + ' · ' + jml + ' perubahan item');
-    return ok(tx.get('Budget_Header', h.ID_Budget), 'Budget v' + h.Versi + ' aktif. Rekap & laba rugi dihitung ulang otomatis.');
-  };
-  A['budget.tolak'] = function (tx, d) {
-    var h = tx.get('Budget_Header', d.ID_Budget); if (!h) throw salah('Budget tidak ditemukan.');
-    if (h.Status !== 'Menunggu') throw salah('Hanya budget berstatus Menunggu yang bisa ditolak.');
-    if (!str(d.catatan)) throw salah('Alasan penolakan wajib diisi.');
-    tx.update('Budget_Header', h.ID_Budget, { Status: 'Ditolak', Catatan_Keputusan: str(d.catatan), Disetujui_Oleh: tx.user.nama, Tgl_Disetujui: tx.now() });
-    var t = tx.get('Trip', h.ID_Trip) || {}, pembuat = tx.where('Pengguna', function (u) { return u.Nama === h.Dibuat_Oleh; })[0];
-    if (pembuat) notif(tx, 'TIM_BUDGET_DIPUTUSKAN', { nama: pembuat.Nama, hp: pembuat.No_WA, email: pembuat.Email }, varsDasar(tx, { trip: t.Nama, versi: h.Versi, keputusan: 'DITOLAK', oleh: tx.user.nama, catatan: str(d.catatan) }), h.ID_Budget);
-    tx.log('Tolak budget v' + h.Versi, 'Budgeting & RAB', t.Kode, str(d.catatan));
-    return ok(tx.get('Budget_Header', h.ID_Budget), 'Budget dikembalikan ke Admin untuk diperbaiki.');
-  };
-  A['budget.hapusDraft'] = function (tx, d) {
-    var h = tx.get('Budget_Header', d.ID_Budget); if (!h) throw salah('Budget tidak ditemukan.');
-    if (['Draft', 'Ditolak'].indexOf(h.Status) < 0) throw salah('Hanya draft yang bisa dihapus.');
-    tx.where('Budget_Item', function (i) { return i.ID_Budget === h.ID_Budget; }).forEach(function (i) { tx.remove('Budget_Item', i.ID_Item); });
-    tx.remove('Budget_Header', h.ID_Budget); tx.log('Hapus draft budget v' + h.Versi, 'Budgeting & RAB', h.ID_Trip, '');
-    return ok({ id: h.ID_Budget }, 'Draft dihapus.');
-  };
-  A['kategori.simpan'] = function (tx, d) {
-    var nama = str(d.Nama); if (!nama) throw salah('Nama kategori wajib diisi.');
-    if (tx.where('Kategori_Biaya', function (k) { return k.Nama.toLowerCase() === nama.toLowerCase() && k.ID_Kategori !== d.ID_Kategori; }).length) throw salah('Kategori sudah ada.');
-    var row = { Nama: nama, Ikon: str(d.Ikon) || 'circle-dollar-sign', Urutan: num(d.Urutan) || tx.all('Kategori_Biaya').length + 1, Aktif: d.Aktif === 'TIDAK' ? 'TIDAK' : 'YA' };
-    var r = d.ID_Kategori && tx.get('Kategori_Biaya', d.ID_Kategori) ? tx.update('Kategori_Biaya', d.ID_Kategori, row) : tx.insert('Kategori_Biaya', row);
-    tx.log('Simpan kategori biaya', 'Sistem', r.ID_Kategori, nama); return ok(r, 'Kategori tersimpan.');
-  };
-  A['kategori.hapus'] = function (tx, d) {
-    var k = tx.get('Kategori_Biaya', d.id); if (!k) throw salah('Kategori tidak ditemukan.');
-    var dipakai = tx.where('Budget_Item', function (i) { return i.Kategori === k.Nama; }).length + tx.where('Realisasi_Biaya', function (i) { return i.Kategori === k.Nama; }).length;
-    if (dipakai) { tx.update('Kategori_Biaya', d.id, { Aktif: 'TIDAK' }); return ok(k, 'Kategori dipakai ' + dipakai + ' item, jadi hanya dinonaktifkan.'); }
-    tx.remove('Kategori_Biaya', d.id); tx.log('Hapus kategori biaya', 'Sistem', d.id, k.Nama); return ok({ id: d.id }, 'Kategori dihapus.');
-  };
-
-  // ---------- Realisasi anggaran: Admin mencatat & melapor → Finance mengaudit → Final masuk laba rugi ----------
-  function konteksRls(tx, idTrip) {
-    var t = tx.get('Trip', idTrip); if (!t) throw salah('Trip tidak ditemukan.');
-    var ix = indeks(tx.D), r = rekapTrip(tx.D, ix, t, tx.today());
-    return { t: t, ix: ix, r: r };
-  }
-  function catatRiwayatRls(tx, k, item, lama, baru, alasan) {
-    tx.insert('Log_Revisi_Budget', { ID_Budget: k.r.budgetId, ID_Trip: k.t.ID_Trip, Siapa: tx.user.nama, Kapan: tx.now(), Item: 'REALISASI — ' + item, Nilai_Lama: lama, Nilai_Baru: baru, Alasan: str(alasan) });
-  }
-  function pastikanBisaEdit(k) {
-    if (!k.r.budgetAktif) throw salah('RAB trip ini belum disetujui Finance. Realisasi dicatat setelah RAB aktif.');
-    if (!k.r.bisaEdit) throw salah('Laporan realisasi berstatus "' + k.r.statusAudit + '" sehingga terkunci.' + (k.r.statusAudit === RLS.FINAL ? ' Minta Finance membuka kembali bila ada koreksi.' : ' Tunggu hasil audit Finance.'));
-  }
-  A['realisasi.simpan'] = function (tx, d) {
-    var k = konteksRls(tx, d.ID_Trip); pastikanBisaEdit(k);
-    var nominal = bulat(d.Nominal); if (nominal <= 0) throw salah('Nominal realisasi harus lebih dari 0.');
-    if (!str(d.Uraian)) throw salah('Uraian wajib diisi.');
-    var row = { ID_Trip: k.t.ID_Trip, Kategori: str(d.Kategori) || 'Lain-lain', Uraian: str(d.Uraian), Nominal: nominal, Tanggal: tgl(d.Tanggal) || tx.today(), Link_Bukti: str(d.Link_Bukti), Status: 'Tercatat', Diinput_Oleh: tx.user.nama, Catatan: str(d.Catatan), Catatan_Verifikasi: '', Diverifikasi_Oleh: '' };
-    var lama = d.ID_Realisasi ? tx.get('Realisasi_Biaya', d.ID_Realisasi) : null;
-    if (lama && lama.ID_Trip !== k.t.ID_Trip) throw salah('Nota bukan milik trip ini.');
-    if (lama && !row.Link_Bukti) row.Link_Bukti = lama.Link_Bukti;
-    var r = lama ? tx.update('Realisasi_Biaya', lama.ID_Realisasi, row) : tx.insert('Realisasi_Biaya', Object.assign(row, { Dibuat: tx.now() }));
-    var rk = recalcRekap(tx, k.t.ID_Trip), k2 = konteksRls(tx, k.t.ID_Trip);
-    tx.log(lama ? 'Ubah nota realisasi' : 'Catat nota realisasi', 'Budgeting & RAB', k.t.Kode, row.Kategori + ' · ' + rp(nominal));
-    return ok(r, 'Nota realisasi tersimpan. Total realisasi ' + rp(k2.r.realisasi) + (k2.r.overBudget ? ' — MELEBIHI RAB ' + rp(k2.r.lebih) + '.' : ' dari RAB ' + rp(k2.r.budget) + '.'));
-  };
-  A['realisasi.hapus'] = function (tx, d) {
-    var x = tx.get('Realisasi_Biaya', d.id); if (!x) throw salah('Data tidak ditemukan.');
-    var k = konteksRls(tx, x.ID_Trip); pastikanBisaEdit(k);
-    tx.remove('Realisasi_Biaya', d.id); recalcRekap(tx, x.ID_Trip); tx.log('Hapus nota realisasi', 'Budgeting & RAB', k.t.Kode, x.Uraian + ' ' + rp(x.Nominal));
-    return ok({ id: d.id }, 'Nota realisasi dihapus.');
-  };
-  /** Admin melaporkan realisasi ke Finance (setelah trip selesai). Melebihi RAB → penjelasan wajib. */
-  A['realisasi.lapor'] = function (tx, d) {
-    var k = konteksRls(tx, d.ID_Trip), r = k.r; pastikanBisaEdit(k);
-    if (!r.adaRealisasi) throw salah('Belum ada nota realisasi untuk dilaporkan.');
-    if (!r.tripSelesai) throw salah('Realisasi dilaporkan setelah trip selesai (' + tglId(k.t.Tgl_Pulang) + ').');
-    if (r.overBudget && str(d.penjelasan).length < 10) throw salah('Realisasi melebihi RAB ' + rp(r.lebih) + '. Tulis penjelasan kelebihan biaya (min. 10 karakter).');
-    var lamaSt = r.statusAudit;
-    recalcRekap(tx, k.t.ID_Trip);
-    tx.update('Rekap_Operasional', k.t.ID_Trip, { Status_Audit: RLS.DIAJUKAN, Tgl_Lapor: tx.now(), Dilapor_Oleh: tx.user.nama, Penjelasan_Lapor: str(d.penjelasan) });
-    catatRiwayatRls(tx, k, lamaSt === RLS.DRAFT ? 'Dilaporkan ke Finance' : 'Dilaporkan ulang ke Finance', 'RAB v' + r.versiBudget + ' ' + rp(r.budget), 'Realisasi ' + rp(r.realisasi) + (r.overBudget ? ' · MELEBIHI RAB ' + rp(r.lebih) + ' (' + r.lebihPersen + '%)' : ' · hemat ' + rp(r.budget - r.realisasi)), d.penjelasan);
-    penerimaTim(tx, 'Finance').forEach(function (p) { notif(tx, 'TIM_REALISASI_DIAJUKAN', p, varsDasar(tx, { trip: k.t.Nama, oleh: tx.user.nama, rab: rp(r.budget), realisasi: rp(r.realisasi), lebih: r.overBudget ? ' ⚠️ melebihi RAB ' + rp(r.lebih) : '', penjelasan: str(d.penjelasan) ? 'Penjelasan: ' + str(d.penjelasan) : '' }), k.t.ID_Trip); });
-    tx.log('Lapor realisasi ke Finance', 'Budgeting & RAB', k.t.Kode, rp(r.realisasi) + (r.overBudget ? ' · melebihi RAB ' + rp(r.lebih) : ''));
-    return ok(tx.get('Rekap_Operasional', k.t.ID_Trip), 'Laporan realisasi dikirim ke Finance untuk diaudit.');
-  };
-  /** Finance memutuskan: setujui (Final → masuk laba rugi) · perbaikan (kembali ke Admin) · tolak. Nota tertentu bisa ditolak. */
-  A['realisasi.verifikasi'] = function (tx, d) {
-    var k = konteksRls(tx, d.ID_Trip), r = k.r, kep = ['setujui', 'perbaikan', 'tolak'].indexOf(d.keputusan) > -1 ? d.keputusan : '';
-    if (!kep) throw salah('Pilih keputusan audit.');
-    if (r.statusAudit !== RLS.DIAJUKAN) throw salah('Hanya laporan berstatus Diajukan yang bisa diaudit (sekarang: ' + r.statusAudit + ').');
-    if (kep !== 'setujui' && str(d.catatan).length < 5) throw salah('Tulis catatan untuk Admin (apa yang harus diperbaiki).');
-    var tolakItem = d.item || {}, nTolak = 0;
-    Object.keys(tolakItem).forEach(function (id) {
-      var x = tx.get('Realisasi_Biaya', id); if (!x || x.ID_Trip !== k.t.ID_Trip) return;
-      tx.update('Realisasi_Biaya', id, { Status: 'Ditolak', Catatan_Verifikasi: str(tolakItem[id]) || 'Ditolak saat audit', Diverifikasi_Oleh: tx.user.nama }); nTolak++;
-    });
-    var aktifItem = tx.where('Realisasi_Biaya', function (x) { return x.ID_Trip === k.t.ID_Trip && x.Status !== 'Ditolak'; });
-    var status = kep === 'setujui' ? RLS.FINAL : kep === 'perbaikan' ? RLS.PERBAIKAN : RLS.DITOLAK, patch = { Diverifikasi_Oleh: tx.user.nama, Tgl_Verifikasi: tx.now(), Catatan_Audit: str(d.catatan) };
-    if (kep === 'setujui') {
-      if (!aktifItem.length) throw salah('Semua nota ditolak — gunakan "Minta perbaikan".');
-      aktifItem.forEach(function (x) { tx.update('Realisasi_Biaya', x.ID_Realisasi, { Status: 'Disetujui', Diverifikasi_Oleh: tx.user.nama }); });
-    }
-    recalcRekap(tx, k.t.ID_Trip);
-    var k2 = konteksRls(tx, k.t.ID_Trip), r2 = k2.r;
-    patch.Status_Audit = status;
-    if (status === RLS.FINAL) { patch.Biaya_Final = r2.realisasi; patch.Laba_Final = r2.pendapatan - r2.realisasi; patch.Tgl_Final = tx.now(); }
-    tx.update('Rekap_Operasional', k.t.ID_Trip, patch);
-    var label = { setujui: 'DISETUJUI (final)', perbaikan: 'PERLU PERBAIKAN', tolak: 'DITOLAK' }[kep];
-    catatRiwayatRls(tx, k, 'Audit Finance: ' + label, 'Realisasi dilaporkan ' + rp(r.realisasi), 'Diakui ' + rp(r2.realisasi) + (nTolak ? ' · ' + nTolak + ' nota ditolak' : '') + (status === RLS.FINAL ? ' · laba final ' + rp(r2.pendapatan - r2.realisasi) : ''), d.catatan);
-    var pelapor = tx.where('Pengguna', function (u) { return u.Nama === (r.dilaporOleh || ''); })[0];
-    (pelapor ? [{ nama: pelapor.Nama, hp: pelapor.No_WA, email: pelapor.Email }] : penerimaTim(tx, 'Admin')).forEach(function (p) { notif(tx, 'TIM_REALISASI_DIPUTUSKAN', p, varsDasar(tx, { trip: k.t.Nama, keputusan: label, oleh: tx.user.nama, catatan: str(d.catatan) }), k.t.ID_Trip); });
-    tx.log('Audit realisasi: ' + label, 'Budgeting & RAB', k.t.Kode, rp(r2.realisasi) + (nTolak ? ' · ' + nTolak + ' nota ditolak' : '') + (str(d.catatan) ? ' · ' + str(d.catatan) : ''));
-    return ok(tx.get('Rekap_Operasional', k.t.ID_Trip), status === RLS.FINAL ? 'Realisasi disetujui & final. Angka masuk laporan laba rugi.' : 'Laporan dikembalikan ke Admin (' + status + ').');
-  };
-  /** Finance membuka kembali laporan final untuk koreksi (keluar dari laba rugi sampai disetujui lagi). */
-  A['realisasi.bukaKembali'] = function (tx, d) {
-    var k = konteksRls(tx, d.ID_Trip);
-    if (k.r.statusAudit !== RLS.FINAL) throw salah('Hanya laporan final yang bisa dibuka kembali.');
-    if (str(d.catatan).length < 5) throw salah('Tulis alasan koreksi.');
-    tx.update('Rekap_Operasional', k.t.ID_Trip, { Status_Audit: RLS.PERBAIKAN, Catatan_Audit: str(d.catatan), Diverifikasi_Oleh: tx.user.nama, Tgl_Verifikasi: tx.now() });
-    catatRiwayatRls(tx, k, 'Dibuka kembali untuk koreksi', 'Final ' + rp(k.r.biaya), 'Perlu perbaikan', d.catatan);
-    var pelapor = tx.where('Pengguna', function (u) { return u.Nama === (k.r.dilaporOleh || ''); })[0];
-    (pelapor ? [{ nama: pelapor.Nama, hp: pelapor.No_WA, email: pelapor.Email }] : penerimaTim(tx, 'Admin')).forEach(function (p) { notif(tx, 'TIM_REALISASI_DIPUTUSKAN', p, varsDasar(tx, { trip: k.t.Nama, keputusan: 'DIBUKA KEMBALI untuk koreksi', oleh: tx.user.nama, catatan: str(d.catatan) }), k.t.ID_Trip); });
-    tx.log('Buka kembali realisasi', 'Budgeting & RAB', k.t.Kode, str(d.catatan));
-    return ok(tx.get('Rekap_Operasional', k.t.ID_Trip), 'Laporan dibuka kembali — keluar dari laba rugi sampai disetujui lagi.');
-  };
-  A['rekap.hitungUlang'] = function (tx) { var n = 0; tx.all('Trip').forEach(function (t) { recalcRekap(tx, t.ID_Trip); n++; }); return ok({ n: n }, n + ' trip dihitung ulang.'); };
-  A['laporan.catat'] = function (tx, d) { tx.log('Unduh laporan ' + str(d.jenis), 'Finansial & Invoice', str(d.periode), str(d.format)); return ok(null, ''); };
+  A['paket.hapus'] = function (tx, d) { var k = tx.get('Paket_Kalkulasi', d.id); if (!k) throw salah('Paket tidak ditemukan.'); tx.remove('Paket_Kalkulasi', d.id); tx.log('Hapus paket kalkulasi', 'Kalkulasi', d.id, k.Nama); return ok({ id: d.id }, 'Paket dihapus.'); };
 
   // ---------- Manifest ----------
-  A['manifest.final'] = function (tx, d) {
-    var m = tx.get('Manifest', d.ID_Manifest); if (!m) throw salah('Manifest tidak ditemukan.');
-    if (m.Tipe === 'Per Trip') return A['manifest.trip'](tx, { ID_Trip: m.ID_Trip });
-    var pj = tx.get('Penjualan', m.ID_Penjualan); if (!pj || pj.Status === 'Batal') throw salah('Penjualan tidak aktif.');
-    var ang = tx.where('Anggota_Rombongan', function (a) { return a.ID_Penjualan === pj.ID_Penjualan && str(a.Nama); });
-    if (ang.length < num(pj.Jumlah_Pax) && !d.paksa) throw salah('Data rombongan belum lengkap: ' + ang.length + '/' + pj.Jumlah_Pax + ' nama terisi.');
-    tx.update('Manifest', m.ID_Manifest, { Status: 'Final', Tgl_Final: tx.now(), Diperbarui: tx.now() });
-    var jp = tx.job('MANIFEST_PDF', m.ID_Manifest, {});
-    var jc = jadwalkanEvent(tx, pj, []);
-    tx.job('CAL_LAMPIRAN', m.ID_Manifest, {}, [jp, jc]);
-    var c = tx.get('Customer', pj.ID_Customer) || {}, t = tx.get('Trip', pj.ID_Trip) || {};
-    notif(tx, 'MANIFEST_FINAL', penerimaCustomer(c), varsDasar(tx, { trip: t.Nama, pax: pj.Jumlah_Pax, meetingPoint: t.Meeting_Point || '-' }), m.ID_Manifest);
-    tx.log('Manifest final v' + m.Versi, 'Manifest & Customer', m.ID_Manifest, c.Nama + ' · ' + t.Nama);
-    return ok(tx.get('Manifest', m.ID_Manifest), 'Manifest final. PDF dibuat & dilampirkan ke event Calendar ' + c.Nama + '.');
+  A['manifest.simpan'] = function (tx, d) {
+    var p = pesananAda(tx, d.ID_Pesanan), lama = tx.get('Manifest', p.ID_Pesanan), now = tx.now();
+    var tl = (d.TL || []).map(function (x) {
+      var r = x.id ? tx.get('Tim_Lapang', x.id) : null;
+      var em = str(r ? r.Email : x.email).toLowerCase(); if (em && !emailValid(em)) throw salah('Email Tim Lapang "' + (x.nama || em) + '" tidak valid.');
+      return { id: r ? r.ID_TL : '', nama: str(r ? r.Nama : x.nama), email: em, hp: hp08(r ? r.No_HP : x.hp), peran: str(r ? r.Peran : x.peran) };
+    }).filter(function (x) { return x.nama; });
+    var cek = (d.Checklist || []).filter(function (c) { return str(c.item) || str(c.detail); }).map(function (c) { return { item: str(c.item), detail: str(c.detail) }; });
+    var peserta = (d.Peserta || []).filter(function (x) { return str(x.nama); }).map(function (x) { return { nama: str(x.nama), hp: hp08(x.hp) || str(x.hp), ket: str(x.ket) }; });
+    var tamu = d.Data_Tamu || {};
+    var row = { PIC_Kantor: str(d.PIC_Kantor), TL: JSON.stringify(tl), Durasi: str(d.Durasi), Data_Tamu: JSON.stringify({ nama: str(tamu.nama), pax: num(tamu.pax) || '', hp: str(tamu.hp), jemput: str(tamu.jemput), drop: str(tamu.drop) }),
+      Checklist: JSON.stringify(cek), Catatan: String(d.Catatan == null ? '' : d.Catatan).trim(), Itinerary: String(d.Itinerary == null ? '' : d.Itinerary).trim(), Peserta: JSON.stringify(peserta),
+      Tampil_Budget: d.Tampil_Budget === false || d.Tampil_Budget === 'TIDAK' ? 'TIDAK' : 'YA', Diperbarui: now };
+    if (lama) { if (lama.Status === 'Terbit') row.Status = 'Berubah'; tx.update('Manifest', p.ID_Pesanan, row); }
+    else { row.ID_Pesanan = p.ID_Pesanan; row.Status = 'Draft'; row.Versi = 0; row.Diundang = '[]'; row.Dibuat_Oleh = tx.user.nama; tx.insert('Manifest', row); }
+    jobKalender(tx);
+    tx.log('Simpan draft manifest', 'Manifest', p.ID_Pesanan, p.Nama + ' · TL: ' + (tl.map(function (x) { return x.nama; }).join(', ') || '-') + ' · ' + peserta.length + ' nama peserta');
+    return ok(tx.get('Manifest', p.ID_Pesanan), 'Draft manifest tersimpan.');
   };
-  A['manifest.revisi'] = function (tx, d) {
-    var m = tx.get('Manifest', d.ID_Manifest); if (!m) throw salah('Manifest tidak ditemukan.');
-    if (m.Status !== 'Final') return ok(m, 'Manifest masih draft.');
-    tx.update('Manifest', m.ID_Manifest, { Status: 'Draft', Versi: num(m.Versi) + 1, Diperbarui: tx.now() });
-    tx.log('Buka revisi manifest v' + (num(m.Versi) + 1), 'Manifest & Customer', m.ID_Manifest, '');
-    return ok(tx.get('Manifest', m.ID_Manifest), 'Revisi dibuka. Saat ditandai Final lagi, lampiran lama di Calendar akan diganti.');
+  /** Dipanggil host setelah PDF manifest tersimpan di Drive. */
+  A['manifest.catatTerbit'] = function (tx, d) {
+    var p = pesananAda(tx, d.ID_Pesanan), m = tx.get('Manifest', p.ID_Pesanan);
+    if (!m) { A['manifest.simpan'](tx, { ID_Pesanan: p.ID_Pesanan }); m = tx.get('Manifest', p.ID_Pesanan); }
+    tx.update('Manifest', p.ID_Pesanan, { Status: 'Terbit', Versi: num(m.Versi) + 1, Link_PDF: str(d.url), File_ID: str(d.fileId), Diterbitkan: tx.now(), Diperbarui: tx.now() });
+    jobKalender(tx);
+    tx.log('Terbitkan manifest (PDF → Calendar)', 'Manifest', p.ID_Pesanan, p.Nama + ' · v' + (num(m.Versi) + 1));
+    return ok(tx.get('Manifest', p.ID_Pesanan), 'Manifest v' + (num(m.Versi) + 1) + ' terbit & dilampirkan ke Google Calendar.');
   };
-  A['manifest.buat'] = function (tx, d) {
-    var pj = tx.get('Penjualan', d.ID_Penjualan); if (!pj) throw salah('Penjualan tidak ditemukan.');
-    pastikanAnggotaUtama(tx, pj); var m = pastikanManifest(tx, pj);
-    return ok(m, 'Draft manifest siap.');
-  };
-  A['manifest.trip'] = function (tx, d) {
-    var t = tx.get('Trip', d.ID_Trip); if (!t) throw salah('Trip tidak ditemukan.');
-    var m = tx.where('Manifest', function (x) { return x.Tipe === 'Per Trip' && x.ID_Trip === t.ID_Trip; })[0];
-    if (m) m = tx.update('Manifest', m.ID_Manifest, { Status: 'Final', Versi: num(m.Versi) + (m.Status === 'Final' ? 1 : 0), Tgl_Final: tx.now(), Diperbarui: tx.now() });
-    else m = tx.insert('Manifest', { Tipe: 'Per Trip', ID_Trip: t.ID_Trip, Status: 'Final', Versi: 1, Tgl_Final: tx.now(), Dibuat_Oleh: tx.user.nama, Diperbarui: tx.now() });
-    tx.job('MANIFEST_PDF', m.ID_Manifest, { excel: true });
-    tx.log('Generate manifest per trip', 'Manifest & Customer', t.Kode, t.Nama);
-    return ok(m, 'Manifest gabungan ' + t.Nama + ' sedang dibuat (PDF & Excel).');
+  /** Dicatat host setelah undangan Calendar terkirim ke email Tim Lapang. */
+  A['manifest.catatUndang'] = function (tx, d) {
+    var p = pesananAda(tx, d.ID_Pesanan), m = tx.get('Manifest', p.ID_Pesanan); if (!m) throw salah('Buat & terbitkan manifest dulu.');
+    var lama = parseJson(m.Diundang, []) || [], baru = (d.emails || []).map(function (e) { return str(e).toLowerCase(); }).filter(emailValid);
+    var gabung = lama.concat(baru.filter(function (e) { return lama.indexOf(e) < 0; }));
+    tx.update('Manifest', p.ID_Pesanan, { Diundang: JSON.stringify(gabung), Diperbarui: tx.now() });
+    var S = tx.S(), inf = infoPesanan(p, S);
+    if (d.kabari) {
+      var tl = parseJson(m.TL, []) || [];
+      tl.filter(function (x) { return baru.indexOf(x.email) > -1 || (d.kabariSemua && x.hp); }).forEach(function (x) {
+        notif(tx, 'TL_MANIFEST', { nama: x.nama, hp: x.hp, email: x.email }, varsDasar(tx, { tamu: p.Nama, trip: p.Trip, tglTrip: inf.jadwal, pax: inf.pax, link: m.Link_PDF || '-' }), p.ID_Pesanan, '', { wa: !!d.wa, email: false });
+      });
+    }
+    tx.log('Undang Tim Lapang ke Calendar', 'Manifest', p.ID_Pesanan, baru.join(', '));
+    return ok({ diundang: gabung }, baru.length + ' email Tim Lapang diundang ke event Google Calendar.');
   };
 
+  // ---------- Rekapitulasi ----------
+  function pastikanRekap(tx, p) {
+    var r = tx.get('Rekap', p.ID_Pesanan); if (r) return r;
+    return tx.insert('Rekap', { ID_Pesanan: p.ID_Pesanan, Bagian: infoPesanan(p, tx.S()).bagian, Tambahan: '[]', Status: 'Draft', Riwayat: '[]', Diperbarui: tx.now() });
+  }
+  function riwayat(tx, r, aksi, ket) { var h = parseJson(r.Riwayat, []) || []; h.push({ w: tx.now(), o: tx.user.nama, a: aksi, k: ket || '' }); return JSON.stringify(h.slice(-40)); }
+  A['rekap.simpan'] = function (tx, d) {
+    var p = pesananAda(tx, d.ID_Pesanan), r = pastikanRekap(tx, p), S = tx.S(), inf = infoPesanan(p, S), b = inf.bagian;
+    if (r.Status === 'Terkunci') throw salah('Margin sudah dikunci Finance — tidak bisa diubah.');
+    var t = (d.Tambahan || []).filter(function (x) { return str(x.uraian) || num(x.nominal); }).map(function (x, i) {
+      if (!str(x.uraian)) throw salah('Uraian tambahan baris ' + (i + 1) + ' wajib diisi.');
+      if (!num(x.nominal)) throw salah('Nominal "' + str(x.uraian) + '" wajib diisi.');
+      return { id: str(x.id) || 'T' + (i + 1), kolom: kolomValid(b, x.kolom) || kolomCadangan(b), jenis: JENIS_TAMBAHAN.indexOf(x.jenis) > -1 ? x.jenis : 'Lainnya', uraian: str(x.uraian), nominal: Math.round(num(x.nominal)), tgl: tgl(x.tgl) || tx.today(), oleh: str(x.oleh) || tx.user.nama };
+    });
+    var patch = { Bagian: b, Tambahan: JSON.stringify(t), Kode_Trip: str(d.Kode_Trip) === inf.kode ? '' : str(d.Kode_Trip), Kapal: str(d.Kapal), Catatan: str(d.Catatan), Diperbarui: tx.now() };
+    patch.Riwayat = riwayat(tx, r, 'Ubah rekap', t.length + ' pengeluaran tambahan · ' + rp(jumlah(t, function (x) { return x.nominal; })));
+    tx.update('Rekap', p.ID_Pesanan, patch); jobRekapSheet(tx, inf);
+    tx.log('Ubah rekap trip', 'Rekap', p.ID_Pesanan, p.Nama + ' · ' + t.length + ' tambahan');
+    return ok(tx.get('Rekap', p.ID_Pesanan), 'Rekap tersimpan.');
+  };
+  A['rekap.ajukan'] = function (tx, d) {
+    var p = pesananAda(tx, d.ID_Pesanan), r = pastikanRekap(tx, p); if (r.Status === 'Terkunci') throw salah('Sudah dikunci.');
+    var S = tx.S(), today = tx.today(), ix = indeks(tx.D), rk = rekapPesanan(tx.D, ix, p, S, today);
+    if (!rk.adaKalkulasi && !rk.tambahan.length) throw salah('Isi kalkulasi atau pengeluaran tambahan dulu sebelum mengajukan.');
+    tx.update('Rekap', p.ID_Pesanan, { Status: 'Siap Dicek', Diajukan_Oleh: tx.user.nama, Tgl_Ajukan: tx.now(), Catatan: d.Catatan != null ? str(d.Catatan) : r.Catatan, Riwayat: riwayat(tx, r, 'Ajukan ke Finance', str(d.Catatan)), Diperbarui: tx.now() });
+    var v = varsDasar(tx, { tamu: p.Nama, trip: p.Trip, tglTrip: rk.inf.jadwal, oleh: tx.user.nama, penjualan: rp(rk.penjualan), pengeluaran: rp(rk.pengeluaran), margin: rp(rk.laba) + ' (' + Math.round(rk.margin * 1000) / 10 + '%)', lebih: rk.over ? '\n⚠️ Over budget ' + rp(rk.over) : '' });
+    penerimaTim(tx, 'Finance').forEach(function (x) { notif(tx, 'TIM_REKAP_SIAP', x, v, p.ID_Pesanan); });
+    tx.log('Ajukan rekap ke Finance', 'Rekap', p.ID_Pesanan, p.Nama);
+    return ok(tx.get('Rekap', p.ID_Pesanan), 'Rekap ditandai siap dicek. Finance mendapat notifikasi.');
+  };
+  function kunciSatu(tx, id, catatan) {
+    var p = tx.get('Pesanan', id); if (!p) throw salah('Pesanan ' + id + ' tidak ditemukan di sheet.');
+    var r = pastikanRekap(tx, p); if (r.Status === 'Terkunci') return null;
+    var S = tx.S(), rk = rekapPesanan(tx.D, indeks(tx.D), p, S, tx.today());
+    var snap = snapshotRekap(rk);
+    tx.update('Rekap', id, { Status: 'Terkunci', Dikunci_Oleh: tx.user.nama, Tgl_Kunci: tx.now(), Snapshot: JSON.stringify(snap), Penjualan_Final: rk.penjualan, Pengeluaran_Final: rk.pengeluaran, Laba_Final: rk.laba,
+      Riwayat: riwayat(tx, r, 'Kunci margin', str(catatan)), Diperbarui: tx.now() });
+    var v = varsDasar(tx, { tamu: p.Nama, trip: p.Trip, keputusan: 'DIKUNCI', oleh: tx.user.nama, catatan: 'Margin ' + rp(rk.laba) + ' (' + Math.round(rk.margin * 1000) / 10 + '%)' + (catatan ? '\nCatatan: ' + catatan : '') });
+    var peng = tx.where('Pengguna', function (u) { return u.Status === 'Aktif' && u.Peran === 'Admin' && (!r.Diajukan_Oleh || u.Nama === r.Diajukan_Oleh); });
+    (peng.length ? peng : tx.where('Pengguna', function (u) { return u.Status === 'Aktif' && u.Peran === 'Admin'; })).forEach(function (u) { notif(tx, 'TIM_REKAP_DIKUNCI', { nama: u.Nama, hp: u.No_WA, email: u.Email }, v, id); });
+    jobRekapSheet(tx, rk.inf);
+    return rk;
+  }
+  A['rekap.kunci'] = function (tx, d) {
+    var ids = d.ids || (d.ID_Pesanan ? [d.ID_Pesanan] : []); if (!ids.length) throw salah('Pilih rekap yang akan dikunci.');
+    var n = 0, laba = 0; ids.forEach(function (id) { var rk = kunciSatu(tx, id, d.catatan); if (rk) { n++; laba += rk.laba; } });
+    tx.log('Kunci margin', 'Rekap', ids.length === 1 ? ids[0] : ids.length + ' trip', 'Margin ' + rp(laba));
+    return ok({ n: n }, n ? n + ' rekap dikunci ✓ — margin masuk laporan laba rugi.' : 'Semua rekap terpilih sudah terkunci.');
+  };
+  A['rekap.buka'] = function (tx, d) {
+    var r = tx.get('Rekap', d.ID_Pesanan); if (!r || r.Status !== 'Terkunci') throw salah('Rekap ini tidak sedang terkunci.');
+    var alasan = str(d.alasan); if (alasan.length < 5) throw salah('Tuliskan alasan membuka kunci (min. 5 karakter).');
+    if (!tx.get('Pesanan', d.ID_Pesanan)) throw salah('Baris pesanan sudah tidak ada di sheet — rekap terkunci ini dipertahankan sebagai arsip.');
+    tx.update('Rekap', d.ID_Pesanan, { Status: 'Draft', Snapshot: '', Penjualan_Final: 0, Pengeluaran_Final: 0, Laba_Final: 0, Dikunci_Oleh: '', Tgl_Kunci: '', Riwayat: riwayat(tx, r, 'Buka kunci', alasan), Diperbarui: tx.now() });
+    var p = tx.get('Pesanan', d.ID_Pesanan), v = varsDasar(tx, { tamu: p.Nama, trip: p.Trip, keputusan: 'DIBUKA KEMBALI', oleh: tx.user.nama, catatan: 'Alasan: ' + alasan });
+    tx.where('Pengguna', function (u) { return u.Status === 'Aktif' && u.Peran === 'Admin'; }).forEach(function (u) { notif(tx, 'TIM_REKAP_DIKUNCI', { nama: u.Nama, hp: u.No_WA, email: u.Email }, v, d.ID_Pesanan); });
+    jobRekapSheet(tx, infoPesanan(p, tx.S()));
+    tx.log('Buka kunci margin', 'Rekap', d.ID_Pesanan, alasan);
+    return ok(tx.get('Rekap', d.ID_Pesanan), 'Kunci dibuka. Admin bisa memperbaiki rekap lagi.');
+  };
+
+  // ---------- Tagihan & pembayaran (Finance) ----------
+  function notifBayar(tx, p, tgSebelum, tgSesudah, b) {
+    var inf = tgSesudah.inf, kontak = { nama: p.Nama, hp: inf.hp, email: inf.email, demo: /\bDEMO\b/i.test(str(p.Tab)) };
+    var v = varsDasar(tx, { trip: p.Trip, tglTrip: inf.jadwal, nominal: rp(b ? b.Nominal : 0), sisa: rp(tgSesudah.sisa) });
+    if (tgSesudah.lunas && !tgSebelum.lunas) notif(tx, 'LUNAS', kontak, v, p.ID_Pesanan);
+    else if (b) notif(tx, 'PEMBAYARAN_DITERIMA', kontak, v, b.ID_Bayar);
+  }
+  A['bayar.simpan'] = function (tx, d) {
+    var p = pesananAda(tx, d.ID_Pesanan), S = tx.S(), today = tx.today(), ix = indeks(tx.D), sebelum = tagihanPesanan(tx.D, ix, p, S, today);
+    var nominal = Math.round(num(d.Nominal)); if (nominal <= 0) throw salah('Nominal pembayaran harus lebih dari 0.');
+    if (nominal > sebelum.sisaHitung && !d.paksa && !d.ID_Bayar) throw salah('Nominal melebihi sisa tagihan (' + rp(sebelum.sisaHitung) + '). Centang "tetap simpan" bila memang benar.');
+    var row = { ID_Pesanan: p.ID_Pesanan, Tanggal: tgl(d.Tanggal) || today, Nominal: nominal, Jenis: str(d.Jenis) || (nominal >= sebelum.sisaHitung ? 'Pelunasan' : 'Cicilan'), Metode: str(d.Metode) || 'Transfer', Link_Bukti: str(d.Link_Bukti), Catatan: str(d.Catatan) }, b;
+    if (d.ID_Bayar && tx.get('Pembayaran', d.ID_Bayar)) b = tx.update('Pembayaran', d.ID_Bayar, row);
+    else { row.Dicatat_Oleh = tx.user.nama; row.Dibuat = tx.now(); b = tx.insert('Pembayaran', row); }
+    var sesudah = tagihanPesanan(tx.D, indeks(tx.D), p, S, today);
+    if (!d.ID_Bayar && d.kabari !== false) notifBayar(tx, p, sebelum, sesudah, b);
+    tx.log(d.ID_Bayar ? 'Ubah pembayaran' : 'Catat pembayaran', 'Tagihan', b.ID_Bayar, p.Nama + ' · ' + row.Jenis + ' ' + rp(nominal));
+    return ok(b, sesudah.lunas ? 'Pembayaran tercatat — ' + p.Nama + ' LUNAS 🎉' : 'Pembayaran tercatat. Sisa ' + rp(sesudah.sisa) + '.');
+  };
+  A['bayar.hapus'] = function (tx, d) { var b = tx.get('Pembayaran', d.id); if (!b) throw salah('Pembayaran tidak ditemukan.'); tx.remove('Pembayaran', d.id); tx.log('Hapus pembayaran', 'Tagihan', d.id, rp(b.Nominal)); return ok({ id: d.id }, 'Pembayaran dihapus.'); };
+  function pastikanTagihan(tx, id) { return tx.get('Tagihan', id) || tx.insert('Tagihan', { ID_Pesanan: id, Status_Manual: '', Jumlah_Pengingat: 0, Diperbarui: tx.now() }); }
+  A['tagihan.tandai'] = function (tx, d) {
+    var p = pesananAda(tx, d.ID_Pesanan), S = tx.S(), today = tx.today(), sebelum = tagihanPesanan(tx.D, indeks(tx.D), p, S, today);
+    var st = d.status === 'Lunas' || d.status === 'Belum Lunas' ? d.status : '';
+    pastikanTagihan(tx, p.ID_Pesanan);
+    tx.update('Tagihan', p.ID_Pesanan, { Status_Manual: st, Catatan: d.catatan != null ? str(d.catatan) : (tx.get('Tagihan', p.ID_Pesanan).Catatan), Oleh: tx.user.nama, Diperbarui: tx.now() });
+    var sesudah = tagihanPesanan(tx.D, indeks(tx.D), p, S, today);
+    if (d.kabari && sesudah.lunas && !sebelum.lunas) notifBayar(tx, p, sebelum, sesudah, null);
+    tx.log('Tandai tagihan: ' + (st || 'otomatis'), 'Tagihan', p.ID_Pesanan, p.Nama);
+    return ok(tx.get('Tagihan', p.ID_Pesanan), st ? p.Nama + ' ditandai ' + st.toUpperCase() + '.' : 'Status tagihan kembali dihitung otomatis.');
+  };
+  A['tagihan.atur'] = function (tx, d) {
+    var p = pesananAda(tx, d.ID_Pesanan); pastikanTagihan(tx, p.ID_Pesanan);
+    var jt = tgl(d.Jatuh_Tempo); if (jt && !tglValid(jt)) throw salah('Tanggal jatuh tempo tidak valid.');
+    tx.update('Tagihan', p.ID_Pesanan, { Jatuh_Tempo: jt, Catatan: str(d.Catatan), Oleh: tx.user.nama, Diperbarui: tx.now() });
+    return ok(tx.get('Tagihan', p.ID_Pesanan), 'Pengaturan tagihan tersimpan.');
+  };
+  A['tagihan.ingatkan'] = function (tx, d) {
+    var S = tx.S(), today = tx.today(), ix = indeks(tx.D), n = 0, orang = 0, lewati = 0;
+    (d.ids || []).forEach(function (id) {
+      var p = ix.psn[id]; if (!p) return; var t = tagihanPesanan(tx.D, ix, p, S, today);
+      if (t.lunas || t.sisa <= 0) { lewati++; return; }
+      var m = notif(tx, 'PENGINGAT_TAGIHAN', { nama: p.Nama, hp: t.inf.hp, email: t.inf.email }, varsDasar(tx, { trip: p.Trip, tglTrip: t.inf.jadwal, sisa: rp(t.sisa), jatuhTempo: tglPanjang(t.jatuhTempo) }), id + '@' + today, '', { wa: d.wa !== false, email: !!d.email });
+      if (m) { n += m; orang++; var tg = pastikanTagihan(tx, id); tx.update('Tagihan', id, { Terakhir_Diingatkan: tx.now(), Jumlah_Pengingat: num(tg.Jumlah_Pengingat) + 1, Diperbarui: tx.now() }); } else lewati++;
+    });
+    tx.log('Kirim pengingat tagihan', 'Tagihan', orang + ' tamu', n + ' pesan');
+    if (!orang) throw salah('Tidak ada pengingat yang bisa dikirim (sudah lunas, nomor/email tidak valid, atau kanal WA/Email belum diaktifkan di menu WhatsApp & CRM).');
+    return ok({ n: n, orang: orang, lewati: lewati }, 'Pengingat masuk antrean kirim untuk ' + orang + ' tamu' + (lewati ? ' (' + lewati + ' dilewati)' : '') + '.');
+  };
+
+  A['tagihan.otomatis'] = function (tx, d) {
+    var hs = str(d.hari).split(',').map(function (x) { return Math.round(num(x)); }).filter(function (x) { return x >= 0 && x <= 60; });
+    if (d.aktif && !hs.length) throw salah('Isi hari pengingat, contoh: 7,3,1');
+    tx.setS('TAGIHAN_OTOMATIS', d.aktif ? 'YA' : 'TIDAK'); if (hs.length) tx.setS('TAGIHAN_H', hs.join(','));
+    tx.log('Atur pengingat tagihan otomatis', 'Tagihan', d.aktif ? 'Aktif' : 'Nonaktif', hs.join(','));
+    return ok({ S: tx.S() }, d.aktif ? 'Pengingat otomatis aktif: H-' + hs.join(', H-') + ' sebelum trip (pukul ±07.00).' : 'Pengingat otomatis dimatikan.');
+  };
+
+  // ---------- Invoice (model klien) ----------
+  A['invoice.simpan'] = function (tx, d) {
+    var p = pesananAda(tx, d.ID_Pesanan), lama = d.ID_Invoice ? tx.get('Invoice', d.ID_Invoice) : null;
+    if (lama && lama.Status === 'Batal') throw salah('Invoice sudah dibatalkan.');
+    var no = str(d.No_Invoice), cid = str(d.Customer_ID).toUpperCase();
+    if (!no) throw salah('Nomor invoice wajib diisi.'); if (!cid) throw salah('Customer ID wajib diisi.');
+    var bentrok = tx.where('Invoice', function (i) { return i.No_Invoice === no && i.ID_Pesanan !== p.ID_Pesanan && i.Status !== 'Batal'; })[0];
+    if (bentrok && !d.paksa) throw salah('No. invoice ' + no + ' sudah dipakai pesanan lain (' + ((tx.get('Pesanan', bentrok.ID_Pesanan) || {}).Nama || bentrok.ID_Pesanan) + ').');
+    var items = (d.Item || []).filter(function (i) { return str(i.desk) || num(i.harga); }).map(function (i) { return { desk: str(i.desk), qty: num(i.qty) || 1, harga: Math.round(num(i.harga)) }; });
+    if (!items.length) throw salah('Isi minimal satu baris deskripsi.');
+    var maks = Math.max(1, num(tx.S().INV_BARIS) || 15); if (items.length > maks) throw salah('Maksimal ' + maks + ' baris (sesuai model invoice).');
+    var tglI = tgl(d.Tanggal) || tx.today(); if (!tglValid(tglI)) throw salah('Tanggal invoice tidak valid.');
+    var row = { ID_Pesanan: p.ID_Pesanan, No_Invoice: no, Customer_ID: cid, Judul: str(d.Judul) || 'Invoice', Tanggal: tglI, Bill_To: String(d.Bill_To == null ? '' : d.Bill_To).trim(), Item: JSON.stringify(items),
+      Disc: Math.round(num(d.Disc)), DP: Math.round(num(d.DP)), Note_Judul: str(d.Note_Judul), Note_Isi: str(d.Note_Isi), Diperbarui: tx.now() }, inv;
+    if (lama) { if (lama.Status === 'Terbit') row.Status = 'Draft'; inv = tx.update('Invoice', lama.ID_Invoice, row); }
+    else {
+      var urut = tx.where('Invoice', function (i) { return i.ID_Pesanan === p.ID_Pesanan; }).reduce(function (m, i) { return Math.max(m, num(i.Urutan)); }, 0) + 1;
+      row.Urutan = urut; row.Status = 'Draft'; row.Kode_Verifikasi = kodeVerif(tx); row.Dibuat_Oleh = tx.user.nama; row.Dibuat = tx.now(); inv = tx.insert('Invoice', row);
+    }
+    tx.log(lama ? 'Ubah invoice' : 'Buat invoice', 'Invoice', inv.ID_Invoice, no + ' · ' + p.Nama);
+    return ok(inv, lama && lama.Status === 'Terbit' ? 'Invoice diubah — terbitkan ulang agar PDF ikut diperbarui.' : 'Draft invoice tersimpan.');
+  };
+  /** Dipanggil host setelah PDF invoice tersimpan di Drive. */
+  A['invoice.catatTerbit'] = function (tx, d) {
+    var inv = tx.get('Invoice', d.ID_Invoice); if (!inv) throw salah('Invoice tidak ditemukan.'); if (inv.Status === 'Batal') throw salah('Invoice sudah dibatalkan.');
+    tx.update('Invoice', inv.ID_Invoice, { Status: 'Terbit', Link_PDF: str(d.url), File_ID: str(d.fileId), Diperbarui: tx.now() });
+    var n = 0; if (d.kirim && (d.kirim.wa || d.kirim.email)) n = kirimInvoice(tx, inv.ID_Invoice, d.kirim);
+    tx.log('Terbitkan invoice', 'Invoice', inv.ID_Invoice, inv.No_Invoice + (n ? ' · dikirim' : ''));
+    return ok(tx.get('Invoice', inv.ID_Invoice), 'Invoice ' + inv.No_Invoice + ' terbit' + (n ? ' & masuk antrean kirim ke tamu.' : '.'));
+  };
+  function kirimInvoice(tx, id, kanal) {
+    var S = tx.S(), di = dataInvoice(tx.D, id, S); if (!di) return 0;
+    var v = varsDasar(tx, { noInvoice: di.inv.No_Invoice, trip: di.p.Trip, tglTrip: di.inf.jadwal, total: rp(di.total), sisa: rp(di.sisa), link: di.inv.Link_PDF || S.APP_URL || '-' });
+    return notif(tx, 'INVOICE_TERBIT', { nama: di.p.Nama, hp: di.inf.hp, email: di.inf.email }, v, di.inv.ID_Invoice, di.inv.File_ID, { wa: !!kanal.wa, email: !!kanal.email });
+  }
+  A['invoice.kirim'] = function (tx, d) {
+    var inv = tx.get('Invoice', d.id); if (!inv || inv.Status !== 'Terbit') throw salah('Terbitkan invoice dulu sebelum dikirim.');
+    var n = kirimInvoice(tx, inv.ID_Invoice, { wa: d.wa !== false, email: !!d.email });
+    if (!n) throw salah('Tidak terkirim: nomor/email tamu tidak valid atau kanal WA/Email belum aktif.');
+    tx.log('Kirim invoice', 'Invoice', inv.ID_Invoice, n + ' pesan'); return ok({ n: n }, 'Invoice masuk antrean kirim (' + n + ' pesan).');
+  };
+  A['invoice.batal'] = function (tx, d) {
+    var inv = tx.get('Invoice', d.id); if (!inv) throw salah('Invoice tidak ditemukan.'); if (!str(d.alasan)) throw salah('Alasan pembatalan wajib diisi.');
+    tx.update('Invoice', inv.ID_Invoice, { Status: 'Batal', Note_Isi: (inv.Note_Isi ? inv.Note_Isi + ' | ' : '') + 'BATAL: ' + str(d.alasan), Diperbarui: tx.now() });
+    tx.log('Batalkan invoice', 'Invoice', inv.ID_Invoice, str(d.alasan)); return ok(tx.get('Invoice', inv.ID_Invoice), 'Invoice dibatalkan.');
+  };
+  A['invoice.hapus'] = function (tx, d) {
+    var inv = tx.get('Invoice', d.id); if (!inv) throw salah('Invoice tidak ditemukan.'); if (inv.Status !== 'Draft') throw salah('Hanya draft yang bisa dihapus. Invoice terbit dibatalkan.');
+    tx.remove('Invoice', inv.ID_Invoice); tx.log('Hapus draft invoice', 'Invoice', inv.ID_Invoice, inv.No_Invoice); return ok({ id: d.id }, 'Draft dihapus.');
+  };
+  function kodeVerif(tx) { return String(tx.H.uuid()).replace(/[^a-z0-9]/gi, '').toUpperCase().slice(0, 12); }
+
+  // ---------- Tim Lapang ----------
+  A['tl.simpan'] = function (tx, d) {
+    var nama = str(d.Nama); if (!nama) throw salah('Nama wajib diisi.');
+    var email = str(d.Email).toLowerCase(); if (email && !emailValid(email)) throw salah('Email tidak valid.');
+    var hp = hp08(d.No_HP); if (hp && !hpValid(hp)) throw salah('Nomor HP tidak valid.');
+    if (email && tx.where('Tim_Lapang', function (t) { return t.Email === email && t.ID_TL !== d.ID_TL; }).length) throw salah('Email sudah dipakai anggota Tim Lapang lain.');
+    var row = { Nama: nama, Peran: str(d.Peran) || 'TL', No_HP: hp, Email: email, Status: d.Status === 'Nonaktif' ? 'Nonaktif' : 'Aktif', Catatan: str(d.Catatan) }, h;
+    if (d.ID_TL && tx.get('Tim_Lapang', d.ID_TL)) h = tx.update('Tim_Lapang', d.ID_TL, row); else { row.Dibuat = tx.now(); h = tx.insert('Tim_Lapang', row); }
+    crmUpsertSatu(tx, 'tl', h);
+    tx.log(d.ID_TL ? 'Ubah Tim Lapang' : 'Tambah Tim Lapang', 'Manifest', h.ID_TL, nama);
+    return ok(h, 'Data Tim Lapang tersimpan.' + (email ? '' : ' Tambahkan email agar bisa diundang ke Google Calendar.'));
+  };
+  A['tl.hapus'] = function (tx, d) {
+    var t = tx.get('Tim_Lapang', d.id); if (!t) throw salah('Data tidak ditemukan.');
+    var dipakai = tx.where('Manifest', function (m) { return (parseJson(m.TL, []) || []).some(function (x) { return x.id === t.ID_TL; }); }).length;
+    if (dipakai) { tx.update('Tim_Lapang', t.ID_TL, { Status: 'Nonaktif' }); tx.log('Nonaktifkan Tim Lapang', 'Manifest', t.ID_TL, t.Nama); return ok({ id: d.id }, t.Nama + ' dipakai di ' + dipakai + ' manifest, jadi dinonaktifkan (bukan dihapus).'); }
+    tx.remove('Tim_Lapang', t.ID_TL); tx.log('Hapus Tim Lapang', 'Manifest', t.ID_TL, t.Nama); return ok({ id: d.id }, 'Dihapus.');
+  };
+
+  // ---------- Biaya operasional (Finance) ----------
+  A['biaya.simpan'] = function (tx, d) {
+    var bulan = str(d.Bulan) || tgl(d.Tanggal).slice(0, 7); if (!/^\d{4}-\d{2}$/.test(bulan)) throw salah('Pilih bulan biaya.');
+    var uraian = str(d.Uraian); if (!uraian) throw salah('Uraian wajib diisi.');
+    var nominal = Math.round(num(d.Nominal)); if (nominal <= 0) throw salah('Nominal harus lebih dari 0.');
+    var kat = str(d.Kategori) || 'Lain-lain', tanggal = tgl(d.Tanggal); if (tanggal && tanggal.slice(0, 7) !== bulan) throw salah('Tanggal tidak berada di bulan ' + labelBulan(bulan) + '.');
+    var row = { Bulan: bulan, Tanggal: tanggal, Kategori: kat, Uraian: uraian, Nominal: nominal, Catatan: str(d.Catatan) }, h;
+    if (d.ID_Biaya && tx.get('Biaya_Operasional', d.ID_Biaya)) h = tx.update('Biaya_Operasional', d.ID_Biaya, row);
+    else { row.Dibuat_Oleh = tx.user.nama; row.Dibuat = tx.now(); h = tx.insert('Biaya_Operasional', row); }
+    tx.log(d.ID_Biaya ? 'Ubah biaya operasional' : 'Catat biaya operasional', 'Laba Rugi', h.ID_Biaya, kat + ' · ' + uraian + ' · ' + rp(nominal));
+    return ok(h, 'Biaya operasional tersimpan.');
+  };
+  A['biaya.hapus'] = function (tx, d) { var b = tx.get('Biaya_Operasional', d.id); if (!b) throw salah('Data tidak ditemukan.'); tx.remove('Biaya_Operasional', d.id); tx.log('Hapus biaya operasional', 'Laba Rugi', d.id, b.Uraian + ' · ' + rp(b.Nominal)); return ok({ id: d.id }, 'Biaya dihapus.'); };
+  A['laporan.catat'] = function (tx, d) { tx.log('Unduh laporan ' + str(d.jenis), 'Laporan', str(d.periode), str(d.format)); return ok(); };
+
   // ---------- Pengaturan & Pengguna ----------
+  var JSON_SETELAN = { INV_REKENING: 'array', INV_SYARAT: 'array', REKAP_LABEL: 'objek', SUMBER_TAB: 'objek', AKSES_MENU: 'objek', PALET: 'objek' };
+  var URL_SETELAN = ['LOGO_URL', 'FAVICON_URL', 'INV_TTD_URL', 'INV_CAP_URL', 'MNF_LOGO_URL', 'LOGIN_FOTO'];
   A['pengaturan.simpan'] = function (tx, d) {
     var kv = d.kv || {}, n = 0, ubah = [];
     Object.keys(kv).forEach(function (k) {
       if (PENGATURAN_BOLEH.indexOf(k) < 0) return;
-      var v = String(kv[k] == null ? '' : kv[k]);
-      if (k === 'PALET') {
-        var p = parseJson(v, null); if (!p) throw salah('Format palet tidak valid.');
-        if (p.preset === 'kustom') { var cek = cekPalet(paletAktif({ PALET: v })); if (!cek.lulus) throw salah('Kontras warna terlalu rendah: ' + cek.masalah.join('; ')); }
+      var v = kv[k]; if (v !== null && typeof v === 'object') v = JSON.stringify(v); v = String(v == null ? '' : v);
+      if (JSON_SETELAN[k] && v) {
+        var j = parseJson(v, null); if (j === null || (JSON_SETELAN[k] === 'array') !== Array.isArray(j)) throw salah('Format ' + k + ' tidak valid.');
+        if (k === 'AKSES_MENU') Object.keys(j).forEach(function (m) { if (!MENU_DIATUR[m] || !Array.isArray(j[m]) || j[m].some(function (r) { return SEMUA.indexOf(r) < 0; })) throw salah('Aturan akses menu tidak valid.'); });
+        if (k === 'PALET' && j.preset === 'kustom') { var cek = cekPalet(paletAktif({ PALET: v })); if (!cek.lulus) throw salah('Kontras warna terlalu rendah: ' + cek.masalah.join('; ')); }
       }
-      if ((k === 'LOGO_URL' || k === 'FAVICON_URL' || k === 'TTD_URL') && v && !/^(https:\/\/|data:image\/|assets\/)/.test(v)) throw salah(k + ' harus berupa URL https.');
+      if (URL_SETELAN.indexOf(k) > -1 && v && !/^(https:\/\/|data:image\/|assets\/)/.test(v)) throw salah(k + ' harus berupa URL https.');
+      if (k === 'INV_WARNA' && v && !/^#[0-9a-f]{6}$/i.test(v)) throw salah('Warna invoice harus format #RRGGBB.');
+      if (k === 'SUMBER_JEDA' && (num(v) < 3 || num(v) > 60)) throw salah('Interval cek perubahan 3–60 detik.');
       if (tx.S()[k] !== v) { tx.setS(k, v); n++; ubah.push(k); }
     });
     if (n) tx.log('Ubah pengaturan', 'Sistem', 'Pengaturan', ubah.join(', '));
+    if (ubah.some(function (k) { return /^REKAP_|^SUMBER_TAB$/.test(k); }) && tx.S().REKAP_SHEET_AKTIF === 'YA') tx.job('REKAP_SHEET', 'semua', {});
     return ok({ S: tx.S(), diubah: ubah }, n ? n + ' pengaturan tersimpan & langsung berlaku.' : 'Tidak ada perubahan.');
   };
+  var GRUP_DEFAULT = { gambar: ['LOGO_URL', 'FAVICON_URL', 'LOGIN_FOTO'], tampilan: ['PALET', 'FONT_BODY', 'FONT_HEAD'],
+    invoice: Object.keys(PENGATURAN_DEFAULT).filter(function (k) { return /^INV_/.test(k); }), manifest: Object.keys(PENGATURAN_DEFAULT).filter(function (k) { return /^MNF_/.test(k); }), rekap: ['REKAP_LABEL', 'REKAP_TAB'] };
   A['pengaturan.default'] = function (tx, d) {
-    var grup = d.grup === 'gambar' ? ['LOGO_URL', 'FAVICON_URL'] : d.grup === 'tampilan' ? ['PALET', 'FONT_BODY', 'FONT_HEAD'] : [];
+    var grup = GRUP_DEFAULT[d.grup] || [];
     grup.forEach(function (k) { tx.setS(k, PENGATURAN_DEFAULT[k][0]); });
     tx.log('Kembalikan default ' + d.grup, 'Sistem', 'Pengaturan', grup.join(', '));
     return ok({ S: tx.S() }, 'Dikembalikan ke default.');
@@ -1223,10 +1303,10 @@ var YX = (function () {
   };
 
   // ==========================================================================
-  // 8. NOTIFIKASI (antrean) & CRM
+  // 7. NOTIFIKASI (antrean) & CRM
   // ==========================================================================
-  function varsDasar(tx, v) { var S = tx.S(); return Object.assign({ perusahaan: S.PT_NAMA, app: S.APP_NAMA, link: S.APP_URL, rekening: S.BANK_NAMA + ' ' + S.BANK_NOREK + ' a.n ' + S.BANK_AN }, v || {}); }
-  function penerimaCustomer(c) { return { nama: c.Nama, hp: c.No_WA, email: c.Email, demo: /\bDEMO\b/i.test(c.Tag || ''), id: c.ID_Customer }; }
+  function teksRekening(S) { return rekeningDari(S).map(function (r) { return r.bank + ' ' + r.norek; }).join(' / ') + (S.INV_ATAS_NAMA ? ' a.n ' + S.INV_ATAS_NAMA : ''); }
+  function varsDasar(tx, v) { var S = tx.S(); return Object.assign({ perusahaan: S.PT_NAMA, app: S.APP_NAMA, link: S.APP_URL, rekening: teksRekening(S) }, v || {}); }
   function penerimaTim(tx, peran) { return tx.where('Pengguna', function (u) { return u.Status === 'Aktif' && u.Peran === peran; }).map(function (u) { return { nama: u.Nama, hp: u.No_WA, email: u.Email, demo: false }; }); }
   function matriksNotif(S) {
     var simpan = parseJson(S.NOTIF_MATRIKS, {}) || {}, out = {};
@@ -1244,13 +1324,13 @@ var YX = (function () {
     try {
       var S = tx.S(), waOn = S.NOTIF_WA_AKTIF === 'YA', emOn = S.NOTIF_EMAIL_AKTIF === 'YA';
       var m = matriksNotif(S)[event]; if (!m) return 0;
-      if (paksa) { m = Object.assign({}, m, { wa: !!paksa.wa && tx.H.waSiap(), email: !!paksa.email }); waOn = true; emOn = true; }
+      if (paksa) { m = Object.assign({}, m, { wa: !!paksa.wa && tx.H.waSiap(), email: !!paksa.email }); }
       if (!waOn && !emOn) return 0;
       if (p.demo && S.NOTIF_KIRIM_DEMO !== 'YA') return 0;
       if (!m.wa && !m.email) return 0;
       var v = Object.assign({ nama: p.nama || 'Bapak/Ibu' }, vars || {}), n = 0, now = tx.now();
       var kontak = p.hp ? tx.where('CRM_Kontak', function (k) { return k.NoWA === hp08(p.hp); })[0] : null;
-      if (kontak && kontak.StatusWA === 'Tidak Terdaftar') kontak = { skipWA: true };
+      if (kontak && (kontak.StatusWA === 'Tidak Terdaftar' || kontak.OptOut === 'YA')) kontak = { skipWA: true };
       if (waOn && m.wa && hpValid(p.hp) && !(kontak && kontak.skipWA)) { var r = barisAntrian('WA', hp62(p.hp), p.nama, '', isiTemplate(m.pesan, v), event, refId, '', ''); r.DibuatPada = now; tx.insert('AntrianNotif', r); n++; }
       if (emOn && m.email && emailValid(p.email)) { var e = barisAntrian('EMAIL', str(p.email), p.nama, isiTemplate(m.subjek, v), isiTemplate(m.pesan, v), event, refId, '', lampiran); e.DibuatPada = now; tx.insert('AntrianNotif', e); n++; }
       tx.nq += n; return n;
@@ -1259,7 +1339,7 @@ var YX = (function () {
 
   /** Fase 1 prosesor antrean: klaim baris (status → Proses). Host mengirim di luar lock. */
   function klaimNotif(tx, opsi) {
-    opsi = opsi || {}; var rows = tx.all('AntrianNotif'), wa = [], em = [], perBlast = {}, S = tx.S();
+    opsi = opsi || {}; var rows = tx.all('AntrianNotif'), wa = [], em = [], perBlast = {};
     var blasts = peta(tx.where('BlastWA', function (b) { return b.Status === 'Berjalan'; }), 'BlastID');
     var sisaEmail = tx.H.sisaEmail ? tx.H.sisaEmail() : 50, waSiap = tx.H.waSiap ? tx.H.waSiap() : false;
     rows.forEach(function (r) {
@@ -1285,7 +1365,6 @@ var YX = (function () {
       if (h.ok) { tx.update('AntrianNotif', id, { Status: 'Terkirim', Respon: str(h.respon).slice(0, 200), DikirimPada: now }); sentTo.push(r); }
       else tx.update('AntrianNotif', id, { Status: num(r.Percobaan) >= 3 ? 'Gagal' : 'Antri', Respon: str(h.respon).slice(0, 200) });
     });
-    // Statistik blast
     tx.where('BlastWA', function (b) { return b.Status === 'Berjalan'; }).forEach(function (b) {
       var rs = tx.where('AntrianNotif', function (r) { return r.BlastID === b.BlastID; });
       var terk = rs.filter(function (r) { return r.Status === 'Terkirim'; }).length, gg = rs.filter(function (r) { return r.Status === 'Gagal'; }).length;
@@ -1304,28 +1383,41 @@ var YX = (function () {
   }
   function adaAntrian(D) { return D.AntrianNotif.some(function (r) { return r.Status === 'Antri'; }); }
 
+  /** Kontak CRM tim (Pengguna) & Tim Lapang. */
   function crmUpsertSatu(tx, sumber, r) {
-    var refId = sumber === 'customer' ? r.ID_Customer : r.ID_Pengguna;
-    var info = sumber === 'customer' ? { Kota: r.Kota, Status: r.Status } : { Peran: r.Peran, Status: r.Status };
-    var data = { Nama: r.Nama, Email: str(r.Email).toLowerCase(), NoWA: hp08(r.No_WA), Segmen: sumber === 'customer' ? 'Customer' : 'Tim ' + r.Peran, Sumber: sumber, RefID: refId, EmailValid: r.Email ? (emailValid(r.Email) ? 'YA' : 'TIDAK') : '', Info: JSON.stringify(info), DiperbaruiPada: tx.now() };
-    if (sumber === 'customer') data.Tag = r.Tag || '';
+    var refId = sumber === 'tl' ? r.ID_TL : r.ID_Pengguna, hp = sumber === 'tl' ? r.No_HP : r.No_WA;
+    var data = { Nama: r.Nama, Email: str(r.Email).toLowerCase(), NoWA: hp08(hp), Segmen: sumber === 'tl' ? 'Tim Lapang' : 'Tim ' + r.Peran, Sumber: sumber, RefID: refId, EmailValid: r.Email ? (emailValid(r.Email) ? 'YA' : 'TIDAK') : '', Info: JSON.stringify({ Peran: r.Peran, Status: r.Status }), DiperbaruiPada: tx.now() };
     var ada = tx.where('CRM_Kontak', function (k) { return k.Sumber === sumber && k.RefID === refId; })[0];
     if (ada) { if (hp08(ada.NoWA) !== data.NoWA) { data.StatusWA = ''; data.CekWAAt = ''; } return tx.update('CRM_Kontak', ada.KontakID, data); }
     return tx.insert('CRM_Kontak', Object.assign({ StatusWA: '', CekWAAt: '', OptOut: 'TIDAK', Catatan: '', JumlahPesan: 0, TerakhirDihubungi: '', DibuatPada: tx.now(), Tag: '' }, data));
   }
+  /** Kontak CRM tamu dari baris pesanan — satu kontak per nomor HP (atau email). */
+  function crmUpsertPesanan(tx, p) {
+    var hp = hpValid(p.No_HP) ? hp08(p.No_HP) : '', em = emailValid(p.Email) ? str(p.Email).toLowerCase() : '', ref = hp ? 'HP:' + hp : (em ? 'EM:' + em : '');
+    if (!ref) return null;
+    var inf = infoPesanan(p, tx.S()), info = { trip: p.Trip, tab: p.Tab, tgl: inf.mulai, pax: inf.pax, id: p.ID_Pesanan };
+    var data = { Nama: str(p.Nama), Email: em, NoWA: hp, Segmen: 'Tamu', Sumber: 'pesanan', RefID: ref, EmailValid: em ? 'YA' : '', Info: JSON.stringify(info), DiperbaruiPada: tx.now() };
+    var ada = tx.where('CRM_Kontak', function (k) { return k.Sumber === 'pesanan' && k.RefID === ref; })[0];
+    if (ada) {
+      var lama = parseJson(ada.Info, {}) || {}; if (lama.tgl && inf.mulai && lama.tgl > inf.mulai) data.Info = ada.Info;
+      if (!em && ada.Email) delete data.Email;
+      return tx.update('CRM_Kontak', ada.KontakID, data);
+    }
+    return tx.insert('CRM_Kontak', Object.assign({ StatusWA: '', CekWAAt: '', OptOut: 'TIDAK', Catatan: '', JumlahPesan: 0, TerakhirDihubungi: '', DibuatPada: tx.now(), Tag: '' }, data));
+  }
   A['crm.sync'] = function (tx) {
     var n0 = tx.all('CRM_Kontak').length;
-    tx.all('Customer').forEach(function (c) { crmUpsertSatu(tx, 'customer', c); });
+    urutkan(tx.all('Pesanan'), function (p) { return tgl(p.Tgl_Mulai); }).forEach(function (p) { crmUpsertPesanan(tx, p); });
     tx.all('Pengguna').forEach(function (u) { crmUpsertSatu(tx, 'tim', u); });
-    var n1 = tx.all('CRM_Kontak').length; tx.setS('CRM_SYNC_TERAKHIR', tx.now());
+    tx.all('Tim_Lapang').forEach(function (t) { crmUpsertSatu(tx, 'tl', t); });
+    var n1 = tx.all('CRM_Kontak').length;
     return ok({ ditambah: n1 - n0, total: n1 }, 'Sinkron CRM selesai: ' + (n1 - n0) + ' kontak baru, total ' + n1 + '.');
   };
   A['crm.simpan'] = function (tx, d) {
     var k = tx.get('CRM_Kontak', d.KontakID); if (!k) throw salah('Kontak tidak ditemukan.');
     var p = {}; ['Tag', 'Catatan', 'OptOut'].forEach(function (f) { if (d[f] !== undefined) p[f] = str(d[f]); });
     var r = tx.update('CRM_Kontak', k.KontakID, p);
-    if (k.Sumber === 'customer' && d.Tag !== undefined) { var c = tx.get('Customer', k.RefID); if (c) tx.update('Customer', c.ID_Customer, { Tag: str(d.Tag) }); }
-    tx.log('Ubah kontak CRM', 'Manifest & Customer', k.KontakID, k.Nama);
+    tx.log('Ubah kontak CRM', 'CRM', k.KontakID, k.Nama);
     return ok(r, 'Kontak tersimpan.');
   };
   A['crm.bulk'] = function (tx, d) {
@@ -1337,7 +1429,7 @@ var YX = (function () {
       else if (aksi === 'untag') p.Tag = str(k.Tag).split(',').map(str).filter(function (t) { return t && t !== str(d.nilai); }).join(', ');
       tx.update('CRM_Kontak', id, p); n++;
     });
-    tx.log('Aksi massal CRM: ' + aksi, 'Manifest & Customer', n + ' kontak', str(d.nilai));
+    tx.log('Aksi massal CRM: ' + aksi, 'CRM', n + ' kontak', str(d.nilai));
     return ok({ n: n }, n + ' kontak diperbarui.');
   };
   A['crm.interaksi'] = function (tx, d) {
@@ -1352,19 +1444,28 @@ var YX = (function () {
     tx.all('CRM_Kontak').forEach(function (k) { var s = p[hp08(k.NoWA)]; if (s) { tx.update('CRM_Kontak', k.KontakID, { StatusWA: s, CekWAAt: now }); n++; } });
     return ok({ n: n }, n + ' kontak diperbarui status WA-nya.');
   };
+  /** Audiens blast: segmen/tag + filter pesanan (kategori, bulan trip, belum lunas). */
   A['wa.audiens'] = function (tx, d) {
-    var ix = indeks(tx.D), kk = tx.all('CRM_Kontak'), tripCust = null;
-    if (d.idTrip) { tripCust = {}; (ix.pjPerTrip[d.idTrip] || []).forEach(function (p) { if (p.Status !== 'Batal') tripCust[p.ID_Customer] = p; }); }
+    var S = tx.S(), today = tx.today(), ix = indeks(tx.D), kk = tx.all('CRM_Kontak'), saring = !!(d.tab || d.bulan || d.belumLunas), lolos = null, varsRef = {};
+    if (saring) {
+      lolos = {};
+      tx.all('Pesanan').forEach(function (p) {
+        var inf = infoPesanan(p, S); if (d.tab && p.Tab !== d.tab) return; if (d.bulan && inf.bulan !== d.bulan) return;
+        var t = tagihanPesanan(tx.D, ix, p, S, today); if (d.belumLunas && (t.lunas || t.sisa <= 0)) return;
+        var ref = inf.hp ? 'HP:' + inf.hp : (inf.email ? 'EM:' + inf.email : ''); if (!ref) return;
+        lolos[ref] = 1; varsRef[ref] = { trip: p.Trip, tglTrip: inf.jadwal, sisa: rp(t.sisa) };
+      });
+    }
     var seen = {}, rows = [];
     kk.forEach(function (k) {
       if (d.segmen && k.Segmen !== d.segmen) return;
       if (d.tag && str(k.Tag).toLowerCase().indexOf(str(d.tag).toLowerCase()) < 0) return;
-      if (tripCust && !(k.Sumber === 'customer' && tripCust[k.RefID])) return;
+      if (lolos && !(k.Sumber === 'pesanan' && lolos[k.RefID])) return;
       if (d.statusWA === 'terdaftar' && k.StatusWA !== 'Terdaftar') return;
       var hp = hp08(k.NoWA), valid = hpValid(hp), ganda = valid && seen[hp]; if (valid) seen[hp] = 1;
-      var c = k.Sumber === 'customer' ? ix.cust[k.RefID] : null; var pj = tripCust && c ? tripCust[c.ID_Customer] : null;
+      var info = parseJson(k.Info, {}) || {};
       rows.push({ id: k.KontakID, nama: k.Nama, hp: hp, statusWA: k.StatusWA, optOut: k.OptOut === 'YA', valid: valid, ganda: !!ganda, demo: /\bDEMO\b/i.test(k.Tag || ''),
-        vars: { nama: k.Nama, trip: pj ? (ix.trip[pj.ID_Trip] || {}).Nama : '', sisa: pj ? rp(Math.max(0, num(pj.Total) - terbayarPj(ix, pj.ID_Penjualan))) : '' } });
+        vars: Object.assign({ nama: k.Nama, trip: info.trip || '', tglTrip: info.tgl ? tglId(info.tgl) : '', sisa: '' }, varsRef[k.RefID] || {}) });
     });
     var ring = { total: rows.length, valid: rows.filter(function (r) { return r.valid && !r.ganda; }).length, tidakValid: rows.filter(function (r) { return !r.valid; }).length, ganda: rows.filter(function (r) { return r.ganda; }).length,
       terdaftarWA: rows.filter(function (r) { return r.statusWA === 'Terdaftar'; }).length, tidakTerdaftarWA: rows.filter(function (r) { return r.statusWA === 'Tidak Terdaftar'; }).length, optOut: rows.filter(function (r) { return r.optOut; }).length };
@@ -1378,7 +1479,7 @@ var YX = (function () {
     var seen = {}, list = [];
     var S0 = tx.S(), opt = {}; tx.all('CRM_Kontak').forEach(function (k) { if (k.OptOut === 'YA' || (/\bDEMO\b/i.test(k.Tag || '') && S0.NOTIF_KIRIM_DEMO !== 'YA')) opt[hp08(k.NoWA)] = 1; });
     (d.penerima || []).forEach(function (p) { var hp = hp08(p.hp); if (!hpValid(hp) || seen[hp] || opt[hp]) return; seen[hp] = 1; list.push({ hp: hp, nama: str(p.nama), vars: p.vars || {} }); });
-    if (!list.length) throw salah('Tidak ada penerima valid (nomor tidak valid, ganda, opt-out, atau kontak contoh DEMO).');
+    if (!list.length) throw salah('Tidak ada penerima valid (nomor tidak valid, ganda, atau opt-out).');
     if (list.length > 5000) throw salah('Maksimal 5.000 penerima per blast.');
     var b = tx.insert('BlastWA', { Judul: str(d.judul) || 'Blast ' + tx.today(), Pesan: pesan, Sasaran: str(d.sasaran), Total: list.length, Terkirim: 0, Gagal: 0, UkuranBatch: ukuran, JedaDetik: jeda, Status: 'Berjalan', DibuatOleh: tx.user.nama, Tanggal: tx.now() });
     var now = tx.now(), S = tx.S();
@@ -1421,112 +1522,98 @@ var YX = (function () {
     return ok({ S: tx.S(), matriks: matriksNotif(tx.S()) }, 'Konfigurasi notifikasi tersimpan.');
   };
 
-  /** Pengingat harian (dipanggil trigger harian). Tidak mengirim ganda di hari yang sama. */
+  /** Pengingat harian (trigger harian): sisa tagihan H-n sebelum trip (bila diaktifkan Finance). Tidak ganda di hari yang sama. */
   function pengingatHarian(tx) {
-    var today = tx.today(), S = tx.S(), ix = indeks(tx.D), n = 0;
+    var S = tx.S(); if (S.TAGIHAN_OTOMATIS !== 'YA') return 0;
+    var today = tx.today(), ix = indeks(tx.D), n = 0, hs = str(S.TAGIHAN_H).split(',').map(function (x) { return num(x); }).filter(function (x) { return x >= 0; });
     var sudah = {}; tx.all('AntrianNotif').forEach(function (r) { if (r.RefID) sudah[r.Event + '|' + r.RefID] = 1; });
-    tx.all('Invoice').forEach(function (i) {
-      if (i.Status !== 'Terbit' || !i.Jatuh_Tempo) return; var h = selisihHari(today, i.Jatuh_Tempo);
-      if (h !== 1 && h !== -1) return; var ref = i.No_Invoice + '@' + today; if (sudah['PENGINGAT_JATUH_TEMPO|' + ref]) return;
-      var pj = ix.pj[i.ID_Penjualan] || {}, c = ix.cust[pj.ID_Customer]; if (!c) return; var t = ix.trip[pj.ID_Trip] || {};
-      n += notif(tx, 'PENGINGAT_JATUH_TEMPO', penerimaCustomer(c), varsDasar(tx, { noInvoice: i.No_Invoice, nominal: rp(i.Nominal), jatuhTempo: tglPanjang(i.Jatuh_Tempo), trip: t.Nama }), ref);
-    });
-    tx.all('Trip').forEach(function (t) {
-      if (t.Status === 'Batal' || selisihHari(today, t.Tgl_Berangkat) !== 3) return;
-      (ix.pjPerTrip[t.ID_Trip] || []).forEach(function (p) {
-        if (p.Status === 'Batal') return; var ref = p.ID_Penjualan + '@' + today; if (sudah['PENGINGAT_BERANGKAT|' + ref]) return;
-        var c = ix.cust[p.ID_Customer]; if (c) n += notif(tx, 'PENGINGAT_BERANGKAT', penerimaCustomer(c), varsDasar(tx, { trip: t.Nama, tglTrip: rentangTgl(t.Tgl_Berangkat, t.Tgl_Pulang), meetingPoint: t.Meeting_Point || '-' }), ref);
-      });
+    tx.all('Pesanan').forEach(function (p) {
+      var t = tagihanPesanan(tx.D, ix, p, S, today); if (t.lunas || t.sisa <= 0 || hs.indexOf(t.hari) < 0) return;
+      var ref = p.ID_Pesanan + '@' + today; if (sudah['PENGINGAT_TAGIHAN|' + ref]) return;
+      var m = notif(tx, 'PENGINGAT_TAGIHAN', { nama: p.Nama, hp: t.inf.hp, email: t.inf.email }, varsDasar(tx, { trip: p.Trip, tglTrip: t.inf.jadwal, sisa: rp(t.sisa), jatuhTempo: tglPanjang(t.jatuhTempo) }), ref);
+      if (m) { n += m; var tg = tx.get('Tagihan', p.ID_Pesanan) || tx.insert('Tagihan', { ID_Pesanan: p.ID_Pesanan, Jumlah_Pengingat: 0 }); tx.update('Tagihan', p.ID_Pesanan, { Terakhir_Diingatkan: tx.now(), Jumlah_Pengingat: num(tg.Jumlah_Pengingat) + 1 }); }
     });
     return n;
   }
 
   // ==========================================================================
-  // 9. ANTREAN TUGAS (PDF / Calendar / kirim) — klaim → host kerjakan → selesaikan
+  // 8. ANTREAN TUGAS (Calendar / tulis rekap ke Google Sheet) — klaim → host kerjakan → selesaikan
   // ==========================================================================
-  /** Klaim tugas yang siap (prasyarat selesai). Tugas INVOICE_KIRIM dikerjakan langsung di sini (hanya mengisi antrean notifikasi). */
+  var BATAS_EVENT = 25;
   function klaimTugas(tx, maks) {
     var rows = tx.all('Antrean_Tugas'), byId = peta(rows, 'ID_Tugas'), out = [];
     rows.forEach(function (r) {
-      if (r.Status !== 'Antri' || out.length >= (maks || 6)) return;
+      if (r.Status !== 'Antri' || out.length >= (maks || 4)) return;
       var p = parseJson(r.Payload, {}), deps = p.setelah || [], siap = true, gagal = false;
       deps.forEach(function (id) { var x = byId[id]; if (!x) return; if (x.Status === 'Gagal') gagal = true; else if (x.Status !== 'Selesai') siap = false; });
-      if (gagal) { tx.update('Antrean_Tugas', r.ID_Tugas, { Status: 'Gagal', Hasil: 'Prasyarat gagal', Selesai: tx.now() }); tandaiProses(tx, r, 'gagal'); return; }
+      if (gagal) { tx.update('Antrean_Tugas', r.ID_Tugas, { Status: 'Gagal', Hasil: 'Prasyarat gagal', Selesai: tx.now() }); return; }
       if (!siap) return;
-      if (r.Jenis === 'INVOICE_KIRIM') { kerjakanKirimInvoice(tx, r, p); return; }
-      // Hindari dua CAL_UPSERT untuk penjualan yang sama dalam satu putaran (event tidak ganda)
-      // …dan jangan klaim bila pekerja lain sedang memproses event penjualan yang sama
-      if (r.Jenis === 'CAL_UPSERT' && (out.some(function (o) { return o.Jenis === 'CAL_UPSERT' && o.Ref === r.Ref; }) || rows.some(function (o) { return o.Jenis === 'CAL_UPSERT' && o.Ref === r.Ref && o.Status === 'Proses'; }))) return;
+      // satu pekerja per jenis+ref (hindari dua sinkron kalender bersamaan)
+      if (out.some(function (o) { return o.Jenis === r.Jenis && o.Ref === r.Ref; }) || rows.some(function (o) { return o.Jenis === r.Jenis && o.Ref === r.Ref && o.Status === 'Proses'; })) return;
       tx.update('Antrean_Tugas', r.ID_Tugas, { Status: 'Proses', Percobaan: num(r.Percobaan) + 1 });
       out.push(konteksTugas(tx, tx.get('Antrean_Tugas', r.ID_Tugas)));
     });
     return out;
   }
-  function kerjakanKirimInvoice(tx, r, p) {
-    var data = dataInvoice(tx.D, r.Ref, tx.S()), n = 0;
-    if (data && data.inv.Status !== 'Batal') {
-      var S = tx.S(), inv = data.inv;
-      var v = varsDasar(tx, { noInvoice: inv.No_Invoice, jenis: inv.Jenis, trip: data.trip.Nama, nominal: rp(inv.Nominal), jatuhTempo: tglPanjang(inv.Jatuh_Tempo), link: inv.Link_PDF || S.APP_URL || '-' });
-      n = notif(tx, 'INVOICE_TERBIT', penerimaCustomer(data.cust), v, inv.No_Invoice, inv.File_ID, { wa: p.wa !== false, email: p.email !== false });
-    }
-    tx.update('Antrean_Tugas', r.ID_Tugas, { Status: 'Selesai', Percobaan: num(r.Percobaan) + 1, Hasil: n ? n + ' pesan masuk antrean kirim' : 'Tidak ada kanal aktif / kontak tidak valid', Selesai: tx.now() });
-    tandaiProses(tx, r, n ? 'ok' : 'lewati');
+  function barisRekapSheet(r) { return { id: r.id, kode: r.kode, qty: r.inf.pax, pic: r.bagian === 'SB' ? (r.kapal || '') : str(r.p.PIC), price: r.inf.harga || (r.inf.pax ? Math.round(r.penjualan / r.inf.pax) : r.penjualan), kol: r.kol, status: r.status, mulai: r.inf.mulai }; }
+  function dataRekapSheet(D, S, today, bulan) {
+    var per = rentangPeriode(bulan, today), rows = rekapDaftar(D, { dari: per.dari, sampai: per.sampai, S: S, today: today });
+    return { bulan: bulan, label: per.label, YB: rows.filter(function (r) { return r.bagian === 'YB'; }).map(barisRekapSheet), SB: rows.filter(function (r) { return r.bagian === 'SB'; }).map(barisRekapSheet) };
   }
   function konteksTugas(tx, r) {
     var S = tx.S(), D = tx.D, k = { ID_Tugas: r.ID_Tugas, Jenis: r.Jenis, Ref: r.Ref, payload: parseJson(r.Payload, {}), S: S };
-    if (r.Jenis === 'INVOICE_PDF' || r.Jenis === 'INVOICE_KIRIM') {
-      k.data = dataInvoice(D, r.Ref, S); if (k.data) { k.trip = k.data.trip; k.cust = k.data.cust; k.inv = k.data.inv; k.pj = k.data.pj; }
-      if (r.Jenis === 'INVOICE_KIRIM' && k.inv) { var m = matriksNotif(S).INVOICE_TERBIT; k.vars = varsDasar(tx, { nama: k.cust.Nama, noInvoice: k.inv.No_Invoice, jenis: k.inv.Jenis, trip: k.trip.Nama, nominal: rp(k.inv.Nominal), jatuhTempo: tglPanjang(k.inv.Jatuh_Tempo), link: k.inv.Link_PDF || S.APP_URL }); k.pesan = isiTemplate(m.pesan, k.vars); k.subjek = isiTemplate(m.subjek, k.vars); }
-    } else if (r.Jenis === 'CAL_UPSERT' || r.Jenis === 'CAL_HAPUS') {
-      var pj = tx.get('Penjualan', r.Ref); k.pj = pj; k.event = pj ? deskripsiEvent(D, r.Ref, S) : null; k.eventId = (pj && pj.ID_Event) || k.payload.eventId || '';
-    } else if (r.Jenis === 'MANIFEST_PDF' || r.Jenis === 'CAL_LAMPIRAN') {
-      var m2 = tx.get('Manifest', r.Ref); k.manifest = m2;
-      if (m2) { k.data = dataManifest(D, m2.Tipe === 'Per Trip' ? { idTrip: m2.ID_Trip } : { idPenjualan: m2.ID_Penjualan, idTrip: m2.ID_Trip }, S); var pj2 = m2.ID_Penjualan ? tx.get('Penjualan', m2.ID_Penjualan) : null; k.eventId = pj2 ? pj2.ID_Event : ''; k.trip = tx.get('Trip', m2.ID_Trip); }
-    } else if (r.Jenis === 'TRIP_FOLDER') { k.trip = tx.get('Trip', r.Ref); }
+    if (r.Jenis === 'KAL_SINKRON') {
+      var ix = indeks(D), ev = [], adaId = {};
+      (D.Pesanan || []).forEach(function (p) {
+        var e = eventPesanan(D, ix, p, S); if (!e) return; adaId[p.ID_Pesanan] = 1;
+        var lama = ix.evt[p.ID_Pesanan]; if (lama && lama.Hash === e.hash && lama.Status === 'OK') return;
+        e.eventId = lama ? lama.Event_ID : ''; e.lampiranLama = lama ? lama.Lampiran : ''; ev.push(e);
+      });
+      k.events = ev.slice(0, BATAS_EVENT); k.sisa = Math.max(0, ev.length - BATAS_EVENT);
+      k.hapus = (D.Kalender_Event || []).filter(function (e) { return !adaId[e.ID_Pesanan] && e.Status !== 'Dihapus' && e.Event_ID; }).slice(0, BATAS_EVENT).map(function (e) { return { id: e.ID_Pesanan, eventId: e.Event_ID }; });
+    } else if (r.Jenis === 'REKAP_SHEET') {
+      var today = tx.today(), bulan = [];
+      if (r.Ref === 'semua') { var o = {}; (D.Pesanan || []).forEach(function (p) { var b = infoPesanan(p, S).bulan; if (b) o[b] = 1; }); (D.Rekap || []).forEach(function (x) { var sp = parseJson(x.Snapshot, null); if (sp && sp.p && sp.p.Tgl_Mulai) o[String(sp.p.Tgl_Mulai).slice(0, 7)] = 1; }); bulan = Object.keys(o).sort(); }
+      else bulan = [r.Ref];
+      k.label = labelRekap(S); k.formatTab = S.REKAP_TAB || 'Rekap {bulan} {tahun}';
+      k.bulan = bulan.map(function (b) { return dataRekapSheet(D, S, today, b); });
+    }
     return k;
   }
-  function tandaiProses(tx, tugas, st) {
-    var map = { INVOICE_PDF: 'pdf', INVOICE_KIRIM: 'kirim' };
-    if (map[tugas.Jenis]) { var inv = tx.get('Invoice', tugas.Ref); if (inv) { var p = prosesInvoice(inv); p[map[tugas.Jenis]] = st; tx.update('Invoice', inv.No_Invoice, { Status_Proses: JSON.stringify(p) }); } }
-    if (tugas.Jenis === 'CAL_UPSERT') tx.where('Invoice', function (i) { return i.ID_Penjualan === tugas.Ref && i.Status !== 'Batal'; }).forEach(function (inv) { var p = prosesInvoice(inv); if (p.cal !== 'ok' || st === 'ok') { p.cal = st; tx.update('Invoice', inv.No_Invoice, { Status_Proses: JSON.stringify(p) }); } });
-  }
-  /** hasil: {ok, pesan, data:{fileId, url, eventId, excelUrl, lampiranId}} */
+  /** hasil: {ok, pesan, data} */
   function selesaikanTugas(tx, idTugas, hasil) {
     var r = tx.get('Antrean_Tugas', idTugas); if (!r) return;
     var h = hasil || {}, d = h.data || {};
     if (!h.ok) {
       var final = num(r.Percobaan) >= 3;
       tx.update('Antrean_Tugas', idTugas, { Status: final ? 'Gagal' : 'Antri', Hasil: str(h.pesan).slice(0, 300), Selesai: final ? tx.now() : '' });
-      if (final) tandaiProses(tx, r, 'gagal');
       return;
     }
     tx.update('Antrean_Tugas', idTugas, { Status: 'Selesai', Hasil: str(h.pesan || 'OK').slice(0, 300), Selesai: tx.now() });
-    if (r.Jenis === 'INVOICE_PDF') { tx.update('Invoice', r.Ref, { Link_PDF: str(d.url), File_ID: str(d.fileId) }); tandaiProses(tx, r, 'ok'); }
-    else if (r.Jenis === 'CAL_UPSERT') {
-      var pj = tx.get('Penjualan', r.Ref);
-      if (pj && d.eventId) { if (pj.ID_Event !== d.eventId) tx.update('Penjualan', pj.ID_Penjualan, { ID_Event: d.eventId }); tx.where('Invoice', function (i) { return i.ID_Penjualan === pj.ID_Penjualan; }).forEach(function (i) { tx.update('Invoice', i.No_Invoice, { ID_Event_Calendar: d.eventId }); }); }
-      tandaiProses(tx, r, 'ok');
-    } else if (r.Jenis === 'CAL_HAPUS') { var pj3 = tx.get('Penjualan', r.Ref); if (pj3) tx.update('Penjualan', pj3.ID_Penjualan, { ID_Event: '' }); }
-    else if (r.Jenis === 'MANIFEST_PDF') { tx.update('Manifest', r.Ref, { Link_File: str(d.url), File_ID: str(d.fileId), Link_Excel: str(d.excelUrl) }); }
-    else if (r.Jenis === 'CAL_LAMPIRAN') { tx.update('Manifest', r.Ref, { ID_Lampiran_Calendar: str(d.lampiranId || d.eventId) }); }
-    else if (r.Jenis === 'TRIP_FOLDER') { tx.update('Trip', r.Ref, { Folder_ID: str(d.folderId) }); }
+    if (r.Jenis === 'KAL_SINKRON') {
+      var now = tx.now();
+      (d.hasil || []).forEach(function (x) {
+        var row = { Event_ID: str(x.eventId), Hash: x.ok ? str(x.hash) : '', Lampiran: str(x.lampiran), Tamu: JSON.stringify(x.tamu || []), Status: x.ok ? 'OK' : 'Gagal', Pesan: str(x.pesan).slice(0, 180), Diperbarui: now };
+        if (tx.get('Kalender_Event', x.id)) tx.update('Kalender_Event', x.id, row); else { row.ID_Pesanan = x.id; tx.insert('Kalender_Event', row); }
+      });
+      (d.hapus || []).forEach(function (id) { if (tx.get('Kalender_Event', id)) tx.remove('Kalender_Event', id); });
+      if (num(d.sisa) > 0) tx.job('KAL_SINKRON', 'semua', {});
+    }
   }
   function tugasTertunda(D) { return D.Antrean_Tugas.filter(function (r) { return r.Status === 'Antri' || r.Status === 'Proses'; }).length; }
 
   // ==========================================================================
-  // 10. ROUTES (RBAC dicek di server) & DISPATCH
+  // 9. ROUTES (RBAC dicek di server) & DISPATCH
   // ==========================================================================
   var ROUTES = {
-    'customer.simpan': { roles: ADM }, 'customer.hapus': { roles: ADM }, 'customer.pulihkan': { roles: ADM },
-    'trip.simpan': { roles: ADM }, 'trip.hapus': { roles: ADM },
-    'penjualan.simpan': { roles: ADM }, 'penjualan.batal': { roles: ADM }, 'penjualan.review': { roles: ADM }, 'anggota.simpan': { roles: ADM },
-    'pembayaran.simpan': { roles: ADM }, 'pembayaran.verifikasi': { roles: ADM }, 'pembayaran.hapus': { roles: ADM },
-    'invoice.buat': { roles: ADM }, 'invoice.batal': { roles: ADM }, 'invoice.kirimUlang': { roles: ADM }, 'invoice.prosesUlang': { roles: ADM },
-    'budget.buat': { roles: ADM }, 'budget.revisi': { roles: ADM }, 'budget.simpanItem': { roles: ADM }, 'budget.ajukan': { roles: ADM }, 'budget.hapusDraft': { roles: ADM },
-    'budget.setujui': { roles: FIN }, 'budget.tolak': { roles: FIN },
-    'kategori.simpan': { roles: ADM }, 'kategori.hapus': { roles: ADM },
-    'realisasi.simpan': { roles: ADM }, 'realisasi.hapus': { roles: ADM }, 'realisasi.lapor': { roles: ADM }, 'realisasi.verifikasi': { roles: FIN }, 'realisasi.bukaKembali': { roles: FIN }, 'rekap.hitungUlang': { roles: SEMUA }, 'laporan.catat': { roles: SEMUA },
-    'manifest.final': { roles: ADM }, 'manifest.revisi': { roles: ADM }, 'manifest.buat': { roles: ADM }, 'manifest.trip': { roles: ADM },
+    'pesanan.simpan': { roles: ADM }, 'pesanan.hapus': { roles: ADM },
+    'kalkulasi.simpan': { roles: ADM }, 'kalkulasi.hapus': { roles: ADM }, 'paket.simpan': { roles: ADM }, 'paket.hapus': { roles: ADM },
+    'manifest.simpan': { roles: ADM }, 'manifest.catatTerbit': { roles: ADM, internal: true }, 'manifest.catatUndang': { roles: ADM, internal: true },
+    'rekap.simpan': { roles: ADM }, 'rekap.ajukan': { roles: ADM }, 'rekap.kunci': { roles: FIN }, 'rekap.buka': { roles: FIN },
+    'bayar.simpan': { roles: FIN }, 'bayar.hapus': { roles: FIN }, 'tagihan.tandai': { roles: FIN }, 'tagihan.atur': { roles: FIN }, 'tagihan.ingatkan': { roles: FIN }, 'tagihan.otomatis': { roles: FIN },
+    'invoice.simpan': { roles: ADM }, 'invoice.catatTerbit': { roles: ADM, internal: true }, 'invoice.kirim': { roles: SEMUA }, 'invoice.batal': { roles: ADM }, 'invoice.hapus': { roles: ADM },
+    'tl.simpan': { roles: ADM }, 'tl.hapus': { roles: ADM },
+    'biaya.simpan': { roles: FIN }, 'biaya.hapus': { roles: FIN }, 'laporan.catat': { roles: SEMUA },
     'pengaturan.simpan': { roles: ADM }, 'pengaturan.default': { roles: ADM },
     'pengguna.simpan': { roles: ADM, pengelola: true }, 'pengguna.resetPin': { roles: ADM, pengelola: true },
     'pengguna.foto': { roles: SEMUA }, 'pengguna.gantiPin': { roles: SEMUA },
@@ -1535,6 +1622,8 @@ var YX = (function () {
     'notif.ulangi': { roles: ADM }, 'notif.simpanKonfig': { roles: ADM }
   };
   Object.keys(ROUTES).forEach(function (k) { ROUTES[k].fn = A[k]; });
+  // Tabel yang disentuh tiap aksi selain tabel inti (server memuat sesuai kebutuhan)
+  var BUTUH_SUMBER = /^(pesanan|kalkulasi|manifest|rekap|bayar|tagihan|invoice|crm\.sync|wa\.audiens)\b/;
 
   /** Jalankan satu aksi tulis/baca terdaftar. Host bertanggung jawab atas auth & lock & commit. */
   function jalankan(H, user, action, data) {
@@ -1554,7 +1643,7 @@ var YX = (function () {
       var rows = D[t] || [];
       if (t === 'Pengguna') rows = rows.map(function (r) { return bersihkanBaris(t, r); });
       if (t === 'Log_Aktivitas') rows = rows.slice(-600);
-      if (t === 'Antrean_Tugas') rows = rows.filter(function (r) { return r.Status !== 'Selesai'; }).concat(rows.filter(function (r) { return r.Status === 'Selesai'; }).slice(-80));
+      if (t === 'Antrean_Tugas') rows = rows.filter(function (r) { return r.Status !== 'Selesai'; }).concat(rows.filter(function (r) { return r.Status === 'Selesai'; }).slice(-60));
       if (t === 'AntrianNotif') rows = admin ? rows.slice(-400) : [];
       if (t === 'CRM_Interaksi') rows = admin ? rows.slice(-400) : [];
       if ((t === 'CRM_Kontak' || t === 'BlastWA') && !admin) rows = [];
@@ -1562,262 +1651,252 @@ var YX = (function () {
     });
     return out;
   }
+  /** Hak buka menu yang diatur Admin (report, laba rugi, tagihan). */
+  function aksesMenu(S, menu, peran) {
+    if (!MENU_DIATUR[menu]) return true;
+    var a = parseJson(S && S.AKSES_MENU, null) || parseJson(PENGATURAN_DEFAULT.AKSES_MENU[0], {});
+    var l = a[menu]; if (!Array.isArray(l)) l = SEMUA; return l.indexOf(peran) > -1;
+  }
 
   // ==========================================================================
-  // 11. DATA DEMO (deterministik, relatif terhadap hari ini)
+  // 10. KOLOM TAB (dipakai host & demo) — label header sheet → kolom kanonik
+  // ==========================================================================
+  /** daftar = [label, ...] atau {grup:'CHECK LIST KEBUTUHAN', isi:[...]} → [{label, kunci, grup, idx}] */
+  function susunKolom(daftar) {
+    var out = [], idx = 0;
+    daftar.forEach(function (x) {
+      if (typeof x === 'object') { x.isi.forEach(function (l) { out.push({ label: l, kunci: '', grup: x.grup, idx: idx++ }); }); return; }
+      out.push({ label: str(x), kunci: kunciKanonik(x), grup: '', idx: idx++ });
+    });
+    return out;
+  }
+
+  // ==========================================================================
+  // 11. DATA DEMO (Mode Demo browser) — memakai isi file dummy klien + data tambahan
   // ==========================================================================
   function isiDemo(H, opsi) {
     opsi = opsi || {};
     var tx = new Tx(H, { nama: 'Sistem', peran: 'Admin', email: 'sistem', id: 'SYS' });
-    var today = tx.today(), seed = 20261108;
+    var today = tx.today(), seed = 20261118;
     function acak() { seed = (seed * 1103515245 + 12345) % 2147483648; return seed / 2147483648; }
     function pilih(a) { return a[Math.floor(acak() * a.length)]; }
+    function antara(a, b) { return a + Math.floor(acak() * (b - a + 1)); }
     function hari(n) { return tambahHari(today, n); }
-    function wkt(n, jam) { return hari(n) + 'T' + (jam || pad(8 + Math.floor(acak() * 10), 2) + ':' + pad(Math.floor(acak() * 60), 2) + ':' + pad(Math.floor(acak() * 60), 2)); }
-    var simulasi = !!opsi.simulasi;
-    var STAF = { raka: 'Raka Pratama', maya: 'Maya Rahma', dimas: 'Dimas Kurnia', sinta: 'Sinta Wulandari', rian: 'Rian Saputra' };
+    function wkt(n, jam) { return hari(n) + 'T' + (jam || pad(8 + Math.floor(acak() * 10), 2) + ':' + pad(Math.floor(acak() * 60), 2) + ':00'); }
 
-    // Pengaturan + kategori
     Object.keys(PENGATURAN_DEFAULT).forEach(function (k) { if (!tx.get('Pengaturan', k)) tx.insert('Pengaturan', { Kunci: k, Nilai: PENGATURAN_DEFAULT[k][0], Keterangan: PENGATURAN_DEFAULT[k][1] }); });
     if (opsi.appUrl) tx.setS('APP_URL', opsi.appUrl);
     if (opsi.verifUrl) tx.setS('VERIF_URL', opsi.verifUrl);
-    if (!tx.all('Kategori_Biaya').length) KATEGORI_DEFAULT.forEach(function (k, i) { tx.insert('Kategori_Biaya', { Nama: k[0], Ikon: k[1], Urutan: i + 1, Aktif: 'YA' }); });
+    tx.setS('MNF_PIC_DEFAULT', 'Riyan Uceng');
+    tx.setS('LOGO_URL', 'assets/logo-yb.png');
+    if (opsi.simulasi) { tx.setS('NOTIF_WA_AKTIF', 'YA'); tx.setS('NOTIF_EMAIL_AKTIF', 'YA'); }
 
-    // Pengguna demo (HANYA mode demo browser — backend tidak membuat akun ber-PIN diketahui)
     if (opsi.denganPengguna) {
-      [['Raka Pratama', 'raka@yukx.id', 'Admin', 'YA', '081211110001'], ['Maya Rahma', 'maya@yukx.id', 'Admin', 'TIDAK', '081211110002'], ['Dimas Kurnia', 'dimas@yukx.id', 'Admin', 'TIDAK', '081211110003'],
-        ['Sinta Wulandari', 'sinta@yukx.id', 'Finance', 'TIDAK', '081211110004'], ['Rian Saputra', 'rian@yukx.id', 'Finance', 'TIDAK', '081211110005']].forEach(function (u, i) {
+      [['Nadia Putri', 'admin@yukbanyuwangi.demo', 'Admin', 'YA', '081211110001'], ['Bagas Saputra', 'bagas@yukbanyuwangi.demo', 'Admin', 'TIDAK', '081211110002'],
+        ['Laras Wening', 'finance@yukbanyuwangi.demo', 'Finance', 'TIDAK', '081211110003']].forEach(function (u, i) {
         var salt = 'demo-salt-' + i; tx.insert('Pengguna', { Nama: u[0], Email: u[1], Peran: u[2], Pengelola: u[3], No_WA: u[4], Salt: salt, Hash_PIN: H.hash('123456', salt), Status: 'Aktif', Foto_URL: '', Terakhir_Login: wkt(-i, '08:1' + i + ':00'), Dibuat: wkt(-120) });
       });
     }
+    // Tim Lapang (nama dari file contoh klien)
+    var TLD = [['Yunus', 'TL & Driver', '081300000101'], ['Ikrom', 'Guide', '081300000102'], ['Faad', 'Guide', '081300000103'], ['Ichang', 'Tim Dokumentasi', '081300000104'], ['Tendy', 'Tim Dokumentasi', '081300000105'], ['Hamzah', 'Korlap Kapal', '081300000106']];
+    var tlId = {}; TLD.forEach(function (t) { var r = tx.insert('Tim_Lapang', { Nama: t[0], Peran: t[1], No_HP: t[2], Email: t[0].toLowerCase() + '.tl@example.com', Status: 'Aktif', Catatan: '', Dibuat: wkt(-90) }); tlId[t[0]] = r; });
 
-    // Trip
-    var TRIP = [
-      ['DRW', 'Derawan Escapade Luxury Resort 4D3N', 'Derawan, Kalimantan Timur', -29, -26, 10, 5850000, 'Bandara Kalimarau, Berau', 'Derawan Dive Resort', 'derawan', 'Snorkeling bersama penyu, danau ubur-ubur Kakaban, dan sunset di dermaga resort.'],
-      ['BRM', 'Bromo Midnight Private Sunrise 2D1N', 'Bromo, Jawa Timur', -21, -20, 14, 2750000, 'Stasiun Malang Kotabaru', 'Lava View Lodge', 'bromo', 'Jeep 4WD tengah malam ke Penanjakan, sunrise di atas lautan pasir, dan kawah Bromo.'],
-      ['LBJ', 'Eksplor Labuan Bajo 4D3N Phinisi', 'Labuan Bajo, NTT', -15, -12, 18, 8350000, 'Bandara Komodo (LBJ)', 'Phinisi KLM Vinca', 'labuan-bajo', 'Live on board phinisi: Pulau Padar, Pink Beach, Komodo, dan Manta Point.'],
-      ['BLT', 'Belitung Island Hopping 3D2N', 'Belitung, Bangka Belitung', -6, -4, 12, 3650000, 'Bandara H.A.S. Hanandjoeddin', 'Billiton Beach Hotel', 'belitung', 'Batu granit raksasa Tanjung Tinggi, Pulau Lengkuas, dan mercusuar tua.'],
-      ['PDR', 'Sailing Komodo & Padar 4D3N', 'Labuan Bajo, NTT', 2, 5, 18, 8900000, 'Bandara Komodo (LBJ)', 'Phinisi Lamborajo', 'padar', 'Sailing premium: trekking Padar saat sunrise, Taka Makassar, dan Kanawa.'],
-      ['R4A', 'Gathering Raja Ampat 5D4N', 'Raja Ampat, Papua Barat Daya', 12, 16, 20, 14750000, 'Bandara DEO Sorong', 'Raja Ampat Dive Lodge', 'raja-ampat', 'Corporate gathering: Piaynemo, Pasir Timbul, Arborek, dan diving Cape Kri.'],
-      ['DNG', 'Dieng Golden Sunrise 3D2N', 'Dieng, Jawa Tengah', 20, 22, 16, 1950000, 'Stasiun Purwokerto', 'Kledung Pass Homestay', 'dieng', 'Golden sunrise Sikunir, Telaga Warna, Candi Arjuna, dan kuliner mie ongklok.'],
-      ['KRJ', 'Karimunjawa Snorkeling Trip 3D2N', 'Karimunjawa, Jawa Tengah', 34, 36, 16, 2450000, 'Pelabuhan Kartini, Jepara', 'Karimunjawa Beach Villa', 'karimunjawa', 'Snorkeling Menjangan Kecil, penangkaran hiu, dan sunset di Bukit Joko Tuwo.']
-    ];
-    var trip = {};
-    TRIP.forEach(function (t) {
-      var b = hari(t[3]);
-      trip[t[0]] = tx.insert('Trip', { Kode: 'TRP-' + t[0] + '-' + b.slice(5, 7) + b.slice(2, 4), Nama: t[1], Tujuan: t[2], Tgl_Berangkat: b, Tgl_Pulang: hari(t[4]), Kuota: t[5], Harga_Default: t[6], Meeting_Point: t[7], Akomodasi: t[8], Foto_URL: 'assets/img/trips/' + t[9] + '.webp', Deskripsi: t[10], Status: 'Open', Folder_ID: '', Dibuat: wkt(t[3] - 70) });
-    });
+    // ---------- Tab sumber (struktur PERSIS file Dummy Database Pemesanan + kolom tambahan sistem)
+    var CEK = { grup: 'CHECK LIST KEBUTUHAN', isi: ['KENDARAAN', 'JEEP', 'GUIDE', 'TIM DOKUMENTASI', 'PENGINAPAN', 'KAPAL SELATAN', 'LAIN-LAIN'] };
+    var OT = ['No', 'Nama', 'PIC', 'Pax', 'Jenis Trip', 'Tanggal Trip', 'NO. HP', 'Asal', 'Sumber Info', 'Email', 'Instagram', 'Penjemputan', 'Harga Jual', 'Total Penjualan', 'DP', 'Sisa Tagihan', 'Setoran', LABEL_TGL_PESAN, LABEL_ID];
+    var TABS = [
+      ['Private YB', 2, ['NOMOR', 'NAMA', 'PIC', 'NO HP', 'PAX', 'TRIP', 'TANGGAL TRIP MULAI', 'TANGGAL TRIP SELESAI', 'ASAL', 'SUMBER INFO', 'EMAIL', 'PENJEMPUTAN', 'LOKASI DROP', 'HARGA', 'TOTAL PENJUALAN', 'DP', 'SISA TAGIHAN', 'LINK BUKTI TF', 'ITINERARY', 'KALKULASI', CEK, LABEL_TGL_PESAN, LABEL_ID]],
+      ['KLB', 1, OT], ['OT Sunrise Boat', 1, OT],
+      ['Private SB', 1, ['No', 'Nama', 'PIC', 'Pax', 'Jenis Trip', 'Tanggal Trip', 'NO. HP', 'Asal', 'Sumber Info', 'Email', 'Penjemputan', 'Harga Jual', 'Total Penjualan', 'DP', 'Sisa Tagihan', LABEL_TGL_PESAN, LABEL_ID]],
+      ['OT Darat', 1, OT], ['TWS', 1, OT]];
+    TABS.forEach(function (t, i) { var kol = susunKolom(t[2]); kol.forEach(function (k) { if (k.kunci === 'Total' || k.kunci === 'Sisa') k.rumus = true; }); tx.insert('Sumber_Tab', { Nama: t[0], Urutan: i + 1, Header: t[1], Kolom: JSON.stringify(kol), Jumlah: 0, Ada_ID: 'YA', Ada_Tgl_Pesan: 'YA' }); });
 
-    // Customer
-    var CUST = [
-      ['Budi Santoso', 'L', 'Jakarta Selatan', 'VIP'], ['Siti Rahmawati', 'P', 'Bandung', ''], ['Hendra Gunawan', 'L', 'Bandung', 'VIP'], ['Dewi Lestari', 'P', 'Jakarta Selatan', ''], ['Andi Wijaya', 'L', 'Surabaya', ''],
-      ['Dina Rosalia', 'P', 'Bekasi', ''], ['Farhan Hakim', 'L', 'Depok', 'Repeat'], ['Keluarga Pratama', 'L', 'Tangerang', 'Keluarga'], ['Rizky Ramadhan', 'L', 'Yogyakarta', ''], ['Nadia Putri', 'P', 'Jakarta Barat', 'Repeat'],
-      ['Agus Setiawan', 'L', 'Semarang', ''], ['Maria Angelina', 'P', 'Jakarta Utara', ''], ['Yusuf Maulana', 'L', 'Bogor', ''], ['Laras Ayu', 'P', 'Malang', ''], ['Bayu Prasetyo', 'L', 'Solo', 'Repeat'],
-      ['Clara Wijaya', 'P', 'Jakarta Pusat', 'VIP'], ['Ilham Saputra', 'L', 'Bekasi', ''], ['Putri Amelia', 'P', 'Depok', ''], ['Reza Firmansyah', 'L', 'Tangerang Selatan', ''], ['Tania Kusuma', 'P', 'Surabaya', ''],
-      ['Galih Pamungkas', 'L', 'Bandung', ''], ['Intan Permata', 'P', 'Jakarta Timur', ''], ['Joko Susilo', 'L', 'Semarang', ''], ['Kartika Sari', 'P', 'Yogyakarta', 'Repeat'], ['Lukman Hakim', 'L', 'Medan', ''],
-      ['Melati Anggraini', 'P', 'Palembang', ''], ['Nanda Pratiwi', 'P', 'Bogor', ''], ['Oki Firdaus', 'L', 'Jakarta Selatan', ''], ['PT Arunika Karya Persada', 'L', 'Jakarta Pusat', 'Corporate'], ['Rani Oktaviani', 'P', 'Bandung', ''],
-      ['Satria Nugraha', 'L', 'Cirebon', ''], ['Tiara Salsabila', 'P', 'Jakarta Selatan', ''], ['Umar Abdullah', 'L', 'Depok', ''], ['Vina Agustina', 'P', 'Tangerang', ''], ['Wahyu Hidayat', 'L', 'Malang', ''],
-      ['Yuni Kartika', 'P', 'Bekasi', ''], ['Zaki Mubarak', 'L', 'Bogor', ''], ['Anisa Rahma', 'P', 'Surabaya', 'Repeat'], ['Bima Sakti', 'L', 'Jakarta Barat', ''], ['Citra Dewanti', 'P', 'Denpasar', '']
-    ];
-    var JALAN = ['Jl. Kemang Selatan', 'Jl. Dago', 'Jl. Ahmad Yani', 'Jl. Gatot Subroto', 'Jl. Diponegoro', 'Jl. Sudirman', 'Jl. Merdeka', 'Jl. Pahlawan', 'Jl. Kaliurang', 'Jl. Margonda Raya'];
-    var DARURAT = ['Ibu', 'Suami', 'Istri', 'Ayah', 'Kakak', 'Adik'];
-    var MEDIS = ['', '', '', 'Alergi udang & kepiting (seafood shell)', '', 'Mabuk laut — siapkan antimo', '', 'Vegetarian', '', 'Asma ringan, bawa inhaler', '', ''];
-    var cust = [];
-    CUST.forEach(function (c, i) {
-      var nama = c[0], corp = /^PT /.test(nama), slug = nama.toLowerCase().replace(/^pt /, '').replace(/[^a-z ]/g, '').trim().replace(/\s+/g, '.');
-      var nik = corp ? '' : (c[1] === 'L' ? '3174' : '3273') + pad(10 + i, 2) + pad(Math.floor(acak() * 900000) + 100000, 6) + pad(Math.floor(acak() * 9000) + 1000, 4);
-      cust.push(tx.insert('Customer', {
-        Nama: nama, No_WA: '0812' + pad(31000000 + i * 7919 + Math.floor(acak() * 999), 8), Email: (corp ? 'procurement@arunika-demo.example.com' : slug + '@example.com'),
-        Alamat: pilih(JALAN) + ' No. ' + (3 + Math.floor(acak() * 120)) + ', ' + c[2], Kota: c[2], Identitas: nik, Tgl_Lahir: corp ? '' : (1972 + Math.floor(acak() * 30)) + '-' + pad(1 + Math.floor(acak() * 12), 2) + '-' + pad(1 + Math.floor(acak() * 27), 2),
-        Gender: corp ? '' : c[1], Kontak_Darurat: corp ? 'Bpk. Hadi (HRD)' : pilih(['Rina', 'Agus', 'Wati', 'Bambang', 'Lestari', 'Hari']) + ' (' + pilih(DARURAT) + ')', Telp_Darurat: '0813' + pad(52000000 + i * 3571, 8),
-        Catatan_Medis: corp ? '' : MEDIS[i % MEDIS.length], Tag: ['DEMO', c[3]].filter(Boolean).join(', '), Catatan: i % 7 === 0 ? 'Request twin bed, lantai non-smoking.' : '', Status: 'Aktif', Tgl_Terdaftar: hari(-200 + i * 3), Diperbarui: wkt(-30 + i % 20)
-      }));
-    });
+    var LINK_ITIN = 'https://docs.google.com/document/d/1ContohItineraryIndofarmaDemoYukBanyuwangi0/edit?usp=sharing';
+    var LINK_KAL = 'https://docs.google.com/spreadsheets/d/1ContohKalkulasiAgungDemoYukBanyuwangi000000/edit?gid=0#gid=0';
+    var LINK_TF = 'https://docs.google.com/document/d/1ContohBuktiTransferDemoYukBanyuwangi0000000/edit?usp=drive_link';
+    var noTab = {};
+    function tambah(tab, o) {
+      noTab[tab] = (noTab[tab] || 0) + 1; var pax = num(o.Pax), harga = num(o.Harga);
+      var row = { Tab: tab, Baris: noTab[tab] + (tab === 'Private YB' ? 2 : 1), No: o.No != null ? o.No : String(noTab[tab]), Nama: o.Nama, PIC: o.PIC || '', No_HP: hp08(o.HP), Pax: pax, Trip: o.Trip, Tgl_Mulai: o.Mulai, Tgl_Selesai: o.Selesai || '',
+        Asal: o.Asal || '', Sumber_Info: o.Sumber || '', Email: o.Email || '', Instagram: o.IG || '', Penjemputan: o.Jemput || '', Lokasi_Drop: o.Drop || '', Harga: harga, Total: pax * harga, DP: num(o.DP), Sisa: pax * harga - num(o.DP),
+        Setoran: '', Link_Bukti_TF: o.TF || '', Link_Itinerary: o.Itin || '', Link_Kalkulasi: o.Kal || '', Tgl_Pesan: o.Pesan || tambahHari(o.Mulai, -antara(7, 40)),
+        Checklist: JSON.stringify(o.Cek || (tab === 'Private YB' ? { KENDARAAN: '', JEEP: '', GUIDE: '', 'TIM DOKUMENTASI': '', PENGINAPAN: '', 'KAPAL SELATAN': '', 'LAIN-LAIN': '' } : {})), Lain: '{}', Rumus: 'Total,Sisa', H: '' };
+      return tx.insert('Pesanan', row);
+    }
+    // 13 baris persis dari file Dummy Database Pemesanan klien
+    var IND = tambah('Private YB', { No: '1', Nama: 'PT Indofarma Indonesia', PIC: 'Agung', HP: '6281803494964', Pax: 30, Trip: 'Private Trip 3D2N Banyuwangi', Mulai: '2026-09-03', Selesai: '2026-09-05', Asal: 'Surabaya', Sumber: 'Instagram', Email: 'indofarma@gmail.com', Harga: 2500000, DP: 10000000, TF: LINK_TF, Itin: LINK_ITIN, Kal: LINK_KAL, Pesan: '2026-08-02',
+      Cek: { KENDARAAN: 'Rama Trans', JEEP: 'Jeep Kantor', GUIDE: 'Ikrom', 'TIM DOKUMENTASI': 'Ichang', PENGINAPAN: 'Kokoon Hotel', 'KAPAL SELATAN': 'Hamzah', 'LAIN-LAIN': 'Outbound' } });
+    var ANG = tambah('Private YB', { No: '2', Nama: 'Anggi Novita', PIC: 'Fida', HP: '6282338950811', Pax: 10, Trip: 'Private Trip 4D3N Banyuwangi', Mulai: '2026-09-05', Selesai: '2026-09-08', Asal: 'Jakarta', Sumber: 'Tiktok', Email: 'angginovita21@gmail.com', Harga: 3000000, DP: 5000000, TF: LINK_TF, Itin: LINK_ITIN, Kal: LINK_KAL, Pesan: '2026-08-10',
+      Cek: { KENDARAAN: 'Hiace Kantor', JEEP: 'Jeep Hendrik', GUIDE: 'Faad', 'TIM DOKUMENTASI': 'Tendy', PENGINAPAN: 'eL Hotel', 'KAPAL SELATAN': '-', 'LAIN-LAIN': '-' } });
+    var MUT = tambah('KLB', { No: '', Nama: 'Mutiara Tsalisa', PIC: 'Website', HP: '87705352879', Pax: 1, Trip: 'Open Trip Keliling Banyuwangi 3D2N', Mulai: '2026-08-15', Asal: 'BANDUNG', Sumber: 'Instagram', Email: 'mutiaratsalisa@gmail.com', IG: '@muuuti', Jemput: 'Stasiun Banyuwangi Kota', Harga: 1500000, DP: 450000, Pesan: '2026-07-20' });
+    var ULF = tambah('KLB', { No: '', Nama: 'Ulfa Habiba', PIC: 'Fida', HP: '8988309490', Pax: 1, Trip: 'Open Trip Keliling Banyuwangi 3D2N', Mulai: '2026-08-15', Asal: 'BANDUNG', Sumber: 'Instagram', Email: 'ulfahabiba@gmail.com', IG: '@ulfaayk', Jemput: 'Stasiun Banyuwangi Kota', Harga: 1500000, DP: 450000, Pesan: '2026-07-22' });
+    var DEV = tambah('OT Sunrise Boat', { No: '', Nama: 'Devi Tri Aprilia', PIC: 'Website', HP: '87705352879', Pax: 2, Trip: 'Open Trip Tabuhan Only', Mulai: '2026-11-01', Asal: 'Malang', Sumber: 'Instagram', Email: 'devitriaprilia1@gmail.com', Harga: 100000, DP: 60000, Pesan: '2026-10-18' });
+    var BUN = tambah('OT Sunrise Boat', { No: '', Nama: 'Bunga', PIC: 'CS YB 3', HP: '8988309490', Pax: 4, Trip: 'Open Trip Menjangan Tabuhan', Mulai: '2026-11-03', Asal: 'Sidoarjo', Sumber: 'Tiktok', Email: 'bunga@gmail.com', IG: '-', Jemput: '-', Harga: 295000, DP: 200000, Pesan: '2026-10-21' });
+    var IRH = tambah('Private SB', { No: '1', Nama: 'Irham (Dearbanyuwangi)', PIC: 'Agung', HP: '81827379887', Pax: 2, Trip: 'PT Tabuhan Only', Mulai: '2026-09-01', Asal: 'Jakarta', Sumber: '-', Email: '-', Jemput: '-', Harga: 200000, DP: 100000, Pesan: '2026-08-25' });
+    var MAH = tambah('Private SB', { No: '2', Nama: 'PT Mahkota Intan', PIC: 'Agung', HP: '87527630798', Pax: 37, Trip: 'PT Tabuhan Only', Mulai: '2026-09-03', Asal: 'Jakarta', Sumber: '-', Email: '-', Jemput: '-', Harga: 200000, DP: 500000, Pesan: '2026-08-19' });
+    var JUL = tambah('OT Darat', { No: '1', Nama: 'Julio Xiantara', PIC: 'Website', HP: '86739866398', Pax: 3, Trip: 'Open Trip Ijen Midnight', Mulai: '2026-08-14', Asal: 'Malang', Sumber: 'Instagram', Email: 'julio@gmail.com', Jemput: 'Kokoon Hotel', Harga: 275000, DP: 200000, Pesan: '2026-08-01' });
+    var AND = tambah('OT Darat', { No: '2', Nama: 'Andel', PIC: 'Website', HP: '86739866399', Pax: 3, Trip: 'Open Trip Baluran', Mulai: '2026-08-22', Asal: 'Bekasi', Sumber: 'Instagram', Email: 'andel@gmail.com', Jemput: 'Santika Hotel', Harga: 300000, DP: 270000, Pesan: '2026-08-09' });
+    var SIS = tambah('OT Darat', { No: '3', Nama: 'Sisca', PIC: 'Website', HP: '86739866300', Pax: 1, Trip: 'Open Trip Djawatan Baluran', Mulai: '2026-08-25', Asal: 'Banyuwangi', Sumber: 'Tiktok', Email: 'sisca@gmail.com', Jemput: 'Santika Hotel', Harga: 300000, DP: 100000, Pesan: '2026-08-20' });
+    var DIN = tambah('TWS', { No: '', Nama: 'Dinny Annissya Wardani', PIC: 'Website', HP: '85606258663', Pax: 2, Trip: 'Tabuhan Watersport Paket Jet Ski Weekend', Mulai: '2026-10-03', Asal: 'Kab. Nganjuk', Sumber: 'Instagram', Email: 'dinnyanni@gmail.com', IG: 'dinnya_', Harga: 350000, DP: 300000, Pesan: '2026-09-21' });
+    var AFN = tambah('TWS', { No: '', Nama: 'Afnan', PIC: 'Website', HP: '83825729140', Pax: 2, Trip: 'Tabuhan Watersport Paket Paddle Board Weekend', Mulai: '2026-10-04', Asal: 'Yogyakarta', Sumber: 'Instagram', Email: 'afnan@gmail.com', IG: 'Afnan', Harga: 150000, DP: 100000, Pesan: '2026-09-25' });
 
-    // Penjualan: [trip, idxCust, pax, diskon, skenario]  skenario: L=lunas, P=pelunasan terbuka, D=dp, B=booking+inv DP, N=booking tanpa invoice, F=full lunas
-    var PJ = [
-      ['DRW', 3, 4, 500000, 'L'], ['DRW', 10, 2, 0, 'F'], ['DRW', 23, 2, 0, 'L'],
-      ['BRM', 2, 2, 0, 'L'], ['BRM', 8, 4, 300000, 'L'], ['BRM', 13, 3, 0, 'L'], ['BRM', 20, 2, 0, 'F'], ['BRM', 30, 1, 0, 'L'],
-      ['LBJ', 0, 2, 0, 'L'], ['LBJ', 15, 4, 900000, 'L'], ['LBJ', 6, 2, 0, 'L'], ['LBJ', 9, 3, 450000, 'L'], ['LBJ', 24, 2, 0, 'F'], ['LBJ', 7, 5, 750000, 'L'],
-      ['BLT', 11, 4, 400000, 'L'], ['BLT', 14, 3, 0, 'L'], ['BLT', 27, 2, 0, 'L'], ['BLT', 37, 1, 0, 'F'],
-      ['PDR', 1, 4, 600000, 'L'], ['PDR', 4, 2, 0, 'L'], ['PDR', 5, 3, 0, 'P'], ['PDR', 16, 2, 0, 'L'], ['PDR', 21, 2, 0, 'D'], ['PDR', 33, 3, 300000, 'L'],
-      ['R4A', 28, 18, 4500000, 'D'],
-      ['DNG', 12, 2, 0, 'D'], ['DNG', 17, 3, 0, 'B'], ['DNG', 25, 2, 0, 'N'], ['DNG', 31, 4, 200000, 'D'], ['DNG', 35, 1, 0, 'N'],
-      ['KRJ', 18, 2, 0, 'B'], ['KRJ', 26, 4, 0, 'D'], ['KRJ', 38, 2, 0, 'N']
-    ];
-    var METODE = ['Transfer BCA', 'Transfer Mandiri', 'QRIS', 'Transfer BCA', 'Transfer BNI'];
-    var NAMA_TAMBAHAN = { L: ['Bagus', 'Arif', 'Dimas', 'Fajar', 'Hafiz', 'Rafi', 'Yoga'], P: ['Ayu', 'Rina', 'Sari', 'Fitri', 'Nia', 'Indah', 'Wulan'], A: ['Kenzo', 'Alya', 'Naura', 'Rayyan', 'Kirana'] };
-    var invList = [], pjRows = [];
-    PJ.forEach(function (p, i) {
-      var t = trip[p[0]], c = cust[p[1]], pax = p[2], total = pax * num(t.Harga_Default) - p[3];
-      var lead = p[4] === 'N' ? 3 + (i % 5) : p[4] === 'B' ? 6 + (i % 6) : 22 + (i % 30) + (p[0] === 'R4A' ? 25 : 0);
-      var tBook = tambahHari(t.Tgl_Berangkat, -lead - 18); if (tBook > today) tBook = hari(-1 - (i % 4));
-      var staf = i % 3 === 0 ? STAF.maya : i % 3 === 1 ? STAF.raka : STAF.dimas;
-      var pj = tx.insert('Penjualan', { ID_Customer: c.ID_Customer, ID_Trip: t.ID_Trip, Jumlah_Pax: pax, Harga_per_Pax: t.Harga_Default, Diskon: p[3], Total: total, Terbayar: 0, Sisa: total, Status: 'Booking', Review_Peserta: 'TIDAK', Tgl_Booking: tBook, Dibuat_Oleh: staf, Catatan: p[0] === 'R4A' ? 'Corporate gathering · PIC Bpk. Hadi · termin 30/70' : '', Diperbarui: wkt(-1) });
-      pjRows.push({ pj: pj, sk: p[4], t: t, c: c, staf: staf });
-      // Anggota rombongan
-      var lengkap = ['N', 'B'].indexOf(p[4]) > -1 ? Math.min(pax, 1 + (i % 2)) : (p[0] === 'R4A' ? 11 : (p[4] === 'D' && p[0] !== 'PDR' ? Math.max(1, pax - 1) : pax));
-      for (var a = 0; a < lengkap; a++) {
-        var g = a === 0 ? c.Gender || 'L' : (a % 2 ? (c.Gender === 'L' ? 'P' : 'L') : (a > 2 ? 'A' : c.Gender || 'L'));
-        var nm = a === 0 ? (/^PT /.test(c.Nama) ? 'Hadi Wibowo' : c.Nama) : pilih(NAMA_TAMBAHAN[g === 'A' ? 'A' : g]) + ' ' + (/^PT /.test(c.Nama) ? pilih(['Santoso', 'Hartono', 'Wibisono', 'Susanto', 'Prakoso', 'Halim']) : c.Nama.split(' ').slice(-1)[0]);
-        tx.insert('Anggota_Rombongan', { ID_Penjualan: pj.ID_Penjualan, ID_Customer: c.ID_Customer, Nama: nm, Identitas: a === 0 && c.Identitas ? c.Identitas : '3' + pad(Math.floor(acak() * 1e9), 9) + pad(Math.floor(acak() * 1e5), 5), Gender: g === 'A' ? pilih(['L', 'P']) : g, Tgl_Lahir: g === 'A' ? (2012 + Math.floor(acak() * 8)) + '-0' + (1 + Math.floor(acak() * 9)) + '-1' + Math.floor(acak() * 9) : (1975 + Math.floor(acak() * 25)) + '-' + pad(1 + Math.floor(acak() * 12), 2) + '-' + pad(1 + Math.floor(acak() * 27), 2), No_HP: a === 0 ? c.No_WA : (a < 2 ? '0857' + pad(40000000 + i * 101 + a, 8) : ''), Ukuran_Baju: pilih(['S', 'M', 'L', 'XL', 'M', 'L']), Kamar: t.Akomodasi.indexOf('Phinisi') > -1 ? pilih(['Master Cabin', 'Deluxe 01', 'Deluxe 02', 'Deluxe 03', 'Family Cabin']) : 'Kamar ' + (101 + (i % 12)), Catatan: a === 0 ? c.Catatan_Medis : '', Urutan: a + 1 });
-      }
-    });
-
-    // Invoice + pembayaran per skenario (urut tanggal agar nomor invoice runtut)
-    var seq = 20, dpPersen = 50;
-    function noInv(tanggal) { seq++; return 'YX/INV/' + tanggal.slice(0, 4) + '/' + tanggal.slice(5, 7) + '/' + pad(seq, 4); }
-    var rencana = [];
-    pjRows.forEach(function (x, i) {
-      var pj = x.pj, t = x.t, total = num(pj.Total), sk = x.sk, tb = pj.Tgl_Booking;
-      var dp = Math.round(total * (t.Kode.indexOf('R4A') > -1 ? 30 : dpPersen) / 100 / 1000) * 1000;
-      var tDp = tambahHari(tb, 1), tPel = tambahHari(t.Tgl_Berangkat, -21); if (tPel <= tDp) tPel = tambahHari(tDp, 2); if (tPel > today) tPel = hari(-2);
-      if (sk === 'F') { rencana.push({ x: x, tgl: tDp, jenis: 'Full', nominal: total, bayar: [[tambahHari(tDp, 1), total, 'Pelunasan']] }); }
-      else if (sk === 'L') { rencana.push({ x: x, tgl: tDp, jenis: 'DP', nominal: dp, bayar: [[tambahHari(tDp, 1), dp, 'DP']] }); rencana.push({ x: x, tgl: tPel, jenis: 'Pelunasan', nominal: total - dp, bayar: [[tambahHari(tPel, 2 > selisihHari(tPel, today) ? 0 : 2), total - dp, 'Pelunasan']] }); }
-      else if (sk === 'P') { rencana.push({ x: x, tgl: tDp, jenis: 'DP', nominal: dp, bayar: [[tambahHari(tDp, 1), dp, 'DP']] }); rencana.push({ x: x, tgl: hari(-3), jenis: 'Pelunasan', nominal: total - dp, bayar: [], jt: hari(-1) }); }
-      else if (sk === 'D') { rencana.push({ x: x, tgl: tDp, jenis: 'DP', nominal: dp, bayar: [[tambahHari(tDp, 1), dp, 'DP']] }); }
-      else if (sk === 'B') { rencana.push({ x: x, tgl: tb > today ? today : tb, jenis: 'DP', nominal: dp, bayar: [], jt: hari(1 + (i % 3)) }); }
-    });
-    urutkan(rencana, function (r) { return r.tgl + r.x.pj.ID_Penjualan; }).forEach(function (r, k) {
-      var x = r.x, pj = x.pj, no = noInv(r.tgl), evt = simulasi ? 'evt' + pad(k + 1, 3) + String(H.uuid()).replace(/[^a-z0-9]/g, '').slice(0, 10) : '';
-      if (simulasi && !pj.ID_Event) pj = x.pj = tx.update('Penjualan', pj.ID_Penjualan, { ID_Event: evt }); else evt = pj.ID_Event;
-      var jt = r.jt || (r.jenis === 'Pelunasan' ? tambahHari(x.t.Tgl_Berangkat, -3) : tambahHari(r.tgl, 3));
-      tx.insert('Invoice', { No_Invoice: no, ID_Penjualan: pj.ID_Penjualan, Jenis: r.jenis, Tgl_Terbit: r.tgl, Jatuh_Tempo: jt, Nominal: r.nominal, Status: 'Terbit', Link_PDF: '', File_ID: simulasi ? 'demo' : '', ID_Event_Calendar: evt,
-        Kode_Verifikasi: String(H.uuid()).replace(/[^a-z0-9]/gi, '').toUpperCase().slice(0, 12), Status_Proses: JSON.stringify(simulasi ? { pdf: 'ok', cal: 'ok', kirim: 'ok' } : { pdf: 'belum', cal: 'belum', kirim: 'lewati' }), Catatan: '', Dibuat_Oleh: x.staf, Dibuat: r.tgl + 'T' + pad(9 + (k % 8), 2) + ':' + pad((k * 7) % 60, 2) + ':00' });
-      r.bayar.forEach(function (b, j) {
-        var tglB = b[0] > today ? today : b[0];
-        tx.insert('Pembayaran', { ID_Penjualan: pj.ID_Penjualan, Jenis: b[2], Tanggal: tglB, Nominal: b[1], Metode: METODE[(k + j) % METODE.length], Link_Bukti: '', Status_Verifikasi: 'Terverifikasi', Diverifikasi_Oleh: STAF.sinta, Catatan: '', Dibuat_Oleh: x.staf, Dibuat: tglB + 'T1' + (k % 9) + ':2' + (k % 6) + ':00' });
-      });
-      pastikanPeserta(tx, pj);
-    });
-    pjRows.forEach(function (x, i) {
-      recalcPenjualan(tx, x.pj.ID_Penjualan);
-      var st = statusTrip(x.t, today);
-      var ps = tx.where('Peserta_Trip', function (p) { return p.ID_Penjualan === x.pj.ID_Penjualan; })[0];
-      if (ps && (st === 'Selesai' || i % 4 !== 2)) { tx.update('Penjualan', x.pj.ID_Penjualan, { Review_Peserta: 'YA' }); tx.update('Peserta_Trip', ps.ID_Peserta, { Status_Data: 'Terverifikasi' }); }
-    });
-    // Satu pembayaran menunggu verifikasi (bukti masuk, belum dicek mutasi)
-    var pdrD = pjRows.filter(function (x) { return x.sk === 'D' && x.t.Kode.indexOf('PDR') > -1; })[0];
-    if (pdrD) tx.insert('Pembayaran', { ID_Penjualan: pdrD.pj.ID_Penjualan, Jenis: 'Cicilan', Tanggal: today, Nominal: 3000000, Metode: 'Transfer Mandiri', Link_Bukti: '', Status_Verifikasi: 'Menunggu', Catatan: 'Bukti dikirim via WA — cek mutasi', Dibuat_Oleh: STAF.maya, Dibuat: today + 'T09:12:00' });
-
-    // Budget berversi
-    var RAB = {
-      DRW: [['Tiket Pesawat', 'Tiket PP Jakarta – Berau (group fare)', 'Termasuk bagasi 20 kg', 8, 'Pax', 1750000], ['Hotel & Akomodasi', 'Derawan Dive Resort (3 malam)', 'Water villa twin share', 4, 'Kamar', 2700000], ['Transportasi & Kapal', 'Speedboat hopping Maratua–Kakaban', '2 hari', 2, 'Hari', 2600000], ['Tiket Masuk & Retribusi', 'Retribusi Kakaban & Sangalaki', '', 8, 'Pax', 150000], ['Guide & Tour Leader', 'Tour leader + guide lokal', '', 1, 'Paket', 2400000], ['Konsumsi', 'Full board 4 hari', '', 8, 'Pax', 520000], ['Biaya Tak Terduga', 'Dana kontingensi cuaca', '', 1, 'Paket', 1000000]],
-      BRM: [['Transportasi & Kapal', 'Jeep 4WD Penanjakan–Kawah', '4 orang/jeep', 4, 'Jeep', 950000], ['Tiket Pesawat', 'Kereta eksekutif Jakarta – Malang PP', 'Kuota rombongan', 12, 'Pax', 420000], ['Transportasi & Kapal', 'Hiace Malang PP', '', 1, 'Unit', 1600000], ['Hotel & Akomodasi', 'Lava View Lodge (1 malam)', '', 6, 'Kamar', 1150000], ['Tiket Masuk & Retribusi', 'Tiket TNBTS', '', 12, 'Pax', 54000], ['Guide & Tour Leader', 'Tour leader', '', 1, 'Paket', 1200000], ['Konsumsi', 'Makan 3x + snack', '', 12, 'Pax', 210000], ['Dokumentasi', 'Drone & DSLR', '', 1, 'Paket', 1500000], ['Perlengkapan & Merchandise', 'Sewa jaket & sarung tangan', '', 12, 'Set', 60000]],
-      LBJ: [['Transportasi & Kapal', 'Sewa Phinisi Luxury KLM Vinca (4D3N private)', 'Vendor: Vinca Liveaboard · kontrak #VC-882', 1, 'Unit Kapal', 42000000], ['Transportasi & Kapal', 'Shuttle Bandara Komodo ⇄ Marina', '2 armada Hiace hari 1 & 4', 2, 'Kendaraan', 3000000], ['Hotel & Akomodasi', 'Hotel Waecicu Beach (1 malam pra-trip)', 'Twin share ocean view', 9, 'Kamar', 2400000], ['Tiket Masuk & Retribusi', 'Tiket TN Komodo, Padar & ranger', 'Termasuk snorkeling & retribusi Pemda', 18, 'Pax', 475000], ['Guide & Tour Leader', 'Tour leader & tim dokumentasi', '1 TL senior + 1 videografer', 1, 'Paket Tim', 6500000], ['Konsumsi', 'Seafood gala dinner Kampung Ujung', '', 18, 'Pax', 350000], ['Perlengkapan & Merchandise', 'Welcome kit & drybag 15L', '', 18, 'Pcs', 185000], ['Biaya Tak Terduga', 'Dana kontingensi cuaca & fastboat', '', 1, 'Paket', 4000000], ['Biaya Tak Terduga', 'P3K marine & oksigen portabel', '', 1, 'Paket', 3000000]],
-      BLT: [['Tiket Pesawat', 'Tiket PP Jakarta – Tanjung Pandan', '', 10, 'Pax', 1150000], ['Hotel & Akomodasi', 'Billiton Beach Hotel (2 malam)', '', 5, 'Kamar', 1300000], ['Transportasi & Kapal', 'Perahu island hopping', '', 2, 'Perahu', 1500000], ['Transportasi & Kapal', 'Mobil Innova 3 hari', '', 2, 'Unit', 1650000], ['Konsumsi', 'Makan + seafood dinner', '', 10, 'Pax', 380000], ['Guide & Tour Leader', 'Tour leader', '', 1, 'Paket', 1500000], ['Biaya Tak Terduga', 'Kontingensi', '', 1, 'Paket', 800000]],
-      PDR: [['Transportasi & Kapal', 'Sewa Phinisi Lamborajo (4D3N)', 'Private charter', 1, 'Unit Kapal', 46000000], ['Transportasi & Kapal', 'Shuttle bandara', '', 2, 'Kendaraan', 3000000], ['Hotel & Akomodasi', 'Hotel pra-trip Labuan Bajo', '', 8, 'Kamar', 2200000], ['Tiket Masuk & Retribusi', 'Tiket TN Komodo & Padar', '', 16, 'Pax', 475000], ['Guide & Tour Leader', 'Tour leader & ranger', '', 1, 'Paket', 6000000], ['Konsumsi', 'Gala dinner', '', 16, 'Pax', 350000], ['Perlengkapan & Merchandise', 'Welcome kit', '', 16, 'Pcs', 185000], ['Biaya Tak Terduga', 'Kontingensi', '', 1, 'Paket', 4000000]],
-      R4A: [['Tiket Pesawat', 'Tiket PP Jakarta – Sorong (corporate)', '', 18, 'Pax', 5200000], ['Hotel & Akomodasi', 'Raja Ampat Dive Lodge (4 malam)', '', 9, 'Kamar', 5800000], ['Transportasi & Kapal', 'Speedboat hopping 3 hari', '', 3, 'Hari', 9500000], ['Tiket Masuk & Retribusi', 'Kartu jasa lingkungan Raja Ampat', '', 18, 'Pax', 1000000], ['Guide & Tour Leader', 'Tour leader + MC gathering', '', 1, 'Paket', 9000000], ['Konsumsi', 'Gala dinner & team building', '', 18, 'Pax', 650000], ['Dokumentasi', 'Videografer corporate', '', 1, 'Paket', 7500000], ['Biaya Tak Terduga', 'Kontingensi', '', 1, 'Paket', 6000000]],
-      DNG: [['Transportasi & Kapal', 'Elf Purwokerto – Dieng PP', '', 2, 'Unit', 1800000], ['Hotel & Akomodasi', 'Homestay (2 malam)', '', 6, 'Kamar', 700000], ['Tiket Masuk & Retribusi', 'Tiket Sikunir, Telaga Warna, Candi Arjuna', '', 12, 'Pax', 95000], ['Konsumsi', 'Makan 6x + mie ongklok', '', 12, 'Pax', 230000], ['Guide & Tour Leader', 'Guide lokal', '', 1, 'Paket', 900000], ['Biaya Tak Terduga', 'Kontingensi', '', 1, 'Paket', 500000]],
-      KRJ: [['Transportasi & Kapal', 'Kapal cepat Jepara PP', '', 8, 'Pax', 300000], ['Transportasi & Kapal', 'Perahu snorkeling 2 hari', '', 2, 'Hari', 1200000], ['Hotel & Akomodasi', 'Karimunjawa Beach Villa', '', 4, 'Kamar', 900000], ['Konsumsi', 'Makan + BBQ ikan', '', 8, 'Pax', 280000], ['Guide & Tour Leader', 'Guide snorkeling', '', 1, 'Paket', 800000]]
+    // Pesanan tambahan (fiktif) agar report & kalender terisi — tanggal relatif hari ini
+    var KOTA = ['Surabaya', 'Jakarta', 'Malang', 'Bandung', 'Sidoarjo', 'Yogyakarta', 'Semarang', 'Denpasar', 'Bekasi', 'Tangerang', 'Kediri', 'Jember', 'Surakarta', 'Bogor', 'Depok', 'Banyuwangi', 'Surabaya', 'Jakarta', 'Malang'];
+    var SUMBER = ['Instagram', 'Instagram', 'Tiktok', 'Tiktok', 'Website', 'Google', 'Teman / Rekomendasi', 'Repeat Order', 'Facebook', 'Instagram'];
+    var DEPAN = ['Rizky', 'Ayu', 'Dimas', 'Putri', 'Fajar', 'Nabila', 'Yoga', 'Salsa', 'Hendra', 'Citra', 'Bima', 'Intan', 'Galih', 'Wulan', 'Reza', 'Melati', 'Arif', 'Tiara', 'Dewa', 'Kirana', 'Satria', 'Laila'];
+    var BELAKANG = ['Pratama', 'Lestari', 'Wibowo', 'Anggraini', 'Santoso', 'Permata', 'Hidayat', 'Maharani', 'Kusuma', 'Ramadhani', 'Saputri', 'Nugroho'];
+    var GRUPP = ['PT Sinar Abadi Logistik', 'Keluarga Hartono', 'Komunitas Lari Kediri', 'CV Mitra Karya Teknik', 'Alumni SMAN Pelita 2010', 'PT Nusantara Agro Lestari', 'Rombongan Arisan Melati', 'Klinik Sehat Sentosa', 'Koperasi Karyawan Bina Usaha', 'Keluarga Wiranata'];
+    var PROD = {
+      'Private YB': [['Private Trip 3D2N Banyuwangi', 2500000, 2], ['Private Trip 2D1N Ijen & Baluran', 1650000, 1], ['Private Trip 4D3N Banyuwangi', 3000000, 3]],
+      'KLB': [['Open Trip Keliling Banyuwangi 3D2N', 1500000, 2], ['Open Trip Keliling Banyuwangi 2D1N', 950000, 1]],
+      'OT Sunrise Boat': [['Open Trip Tabuhan Only', 100000, 0], ['Open Trip Menjangan Tabuhan', 295000, 0], ['Open Trip Sunrise Boat Menjangan', 350000, 0]],
+      'Private SB': [['PT Tabuhan Only', 200000, 0], ['PT Menjangan Tabuhan', 450000, 0]],
+      'OT Darat': [['Open Trip Ijen Midnight', 275000, 0], ['Open Trip Baluran', 300000, 0], ['Open Trip Djawatan Baluran', 300000, 0], ['Open Trip Ijen Sunrise', 325000, 0]],
+      'TWS': [['Tabuhan Watersport Paket Jet Ski Weekend', 350000, 0], ['Tabuhan Watersport Paket Paddle Board Weekend', 150000, 0], ['Tabuhan Watersport Paket Banana Boat', 125000, 0]]
     };
-    var VERSI_RENCANA = { DRW: [['Digantikan', 1.04], ['Aktif', 1]], BRM: [['Digantikan', 1.06], ['Aktif', 1]], LBJ: [['Digantikan', 1.08], ['Digantikan', 1.03], ['Aktif', 1]], BLT: [['Aktif', 1]], PDR: [['Digantikan', 1.05], ['Aktif', 1]], R4A: [['Menunggu', 1]], DNG: [['Aktif', 1]], KRJ: [['Draft', 1]] };
-    var ALASAN = ['Budget awal berdasarkan quotation vendor', 'Penyesuaian harga kapal & kuota peserta', 'Negosiasi ulang vendor kapal — hemat biaya charter'];
-    Object.keys(RAB).forEach(function (k) {
-      var t = trip[k], vers = VERSI_RENCANA[k], prev = null;
-      vers.forEach(function (v, vi) {
-        var dibuat = tambahHari(t.Tgl_Berangkat, -60 + vi * 12) > today ? hari(-3 + vi) : tambahHari(t.Tgl_Berangkat, -60 + vi * 12);
-        var h = tx.insert('Budget_Header', { ID_Trip: t.ID_Trip, Versi: vi + 1, Status: v[0], Total: 0, Alasan_Revisi: ALASAN[Math.min(vi, 2)], Dibuat_Oleh: vi % 2 ? STAF.maya : STAF.raka, Tgl_Dibuat: dibuat + 'T10:1' + vi + ':00', Disetujui_Oleh: ['Aktif', 'Digantikan'].indexOf(v[0]) > -1 ? STAF.sinta : '', Tgl_Disetujui: ['Aktif', 'Digantikan'].indexOf(v[0]) > -1 ? tambahHari(dibuat, 1) + 'T14:2' + vi + ':00' : '' });
-        RAB[k].forEach(function (it, ii) {
-          var harga = ii === 0 ? Math.round(it[5] * v[1] / 1000) * 1000 : it[5];
-          tx.insert('Budget_Item', { ID_Budget: h.ID_Budget, Kategori: it[0], Uraian: it[1], Keterangan: it[2], Qty: it[3], Satuan: it[4], Harga_Satuan: harga, Subtotal: it[3] * harga, Urutan: ii + 1 });
-        });
-        var tot = hitungTotalBudget(tx, h.ID_Budget);
-        if (prev && ['Aktif', 'Digantikan'].indexOf(v[0]) > -1) {
-          var it0 = RAB[k][0];
-          tx.insert('Log_Revisi_Budget', { ID_Budget: h.ID_Budget, ID_Trip: t.ID_Trip, Siapa: h.Dibuat_Oleh, Kapan: h.Tgl_Disetujui, Item: it0[0] + ' — ' + it0[1], Nilai_Lama: it0[3] + ' ' + it0[4] + ' × ' + rp(prev.harga0) + ' = ' + rp(prev.harga0 * it0[3]), Nilai_Baru: it0[3] + ' ' + it0[4] + ' × ' + rp(Math.round(it0[5] * v[1] / 1000) * 1000) + ' = ' + rp(Math.round(it0[5] * v[1] / 1000) * 1000 * it0[3]), Alasan: h.Alasan_Revisi });
-          tx.insert('Log_Revisi_Budget', { ID_Budget: h.ID_Budget, ID_Trip: t.ID_Trip, Siapa: STAF.sinta, Kapan: h.Tgl_Disetujui, Item: 'TOTAL BUDGET (v' + h.Versi + ' disetujui)', Nilai_Lama: rp(prev.total) + ' (v' + prev.versi + ')', Nilai_Baru: rp(tot), Alasan: h.Alasan_Revisi });
-        }
-        prev = { total: tot, versi: vi + 1, harga0: Math.round(RAB[k][0][5] * v[1] / 1000) * 1000 };
-      });
+    var CS = ['Agung', 'Fida', 'CS YB 3', 'Website'], JEMPUT = ['Stasiun Banyuwangi Kota', 'Bandara BWI', 'Pelabuhan Ketapang', 'Kokoon Hotel', 'Santika Hotel', 'Dialog Hotel', 'eL Hotel'];
+    var BOBOT = [['Private YB', 4], ['KLB', 3], ['OT Sunrise Boat', 4], ['Private SB', 2], ['OT Darat', 5], ['TWS', 3]], tot = 0; BOBOT.forEach(function (b) { tot += b[1]; });
+    var tambahan = [];
+    for (var i = 0; i < 64; i++) {
+      var r = acak() * tot, tab = BOBOT[0][0]; for (var j = 0, c = 0; j < BOBOT.length; j++) { c += BOBOT[j][1]; if (r < c) { tab = BOBOT[j][0]; break; } }
+      var pr = pilih(PROD[tab]), mulai = hari(antara(-105, 68)), priv = /Private/.test(tab);
+      var pax = priv ? (tab === 'Private SB' ? antara(4, 30) : antara(4, 28)) : antara(1, 6), harga = pr[1];
+      var nama = priv && acak() < 0.55 ? pilih(GRUPP) : pilih(DEPAN) + ' ' + pilih(BELAKANG), total = pax * harga;
+      var dp = acak() < 0.15 ? total : Math.round(total * pilih([0.3, 0.4, 0.5]) / 10000) * 10000;
+      var o = { Nama: nama, PIC: pilih(CS), HP: '08' + antara(11, 99) + pad(antara(0, 99999999), 8), Pax: pax, Trip: pr[0], Mulai: mulai, Selesai: pr[2] ? tambahHari(mulai, pr[2]) : '', Asal: pilih(KOTA), Sumber: pilih(SUMBER),
+        Email: nama.toLowerCase().replace(/[^a-z]+/g, '.').replace(/^\.|\.$/g, '') + '@example.com', IG: priv ? '' : '@' + nama.split(' ')[0].toLowerCase() + antara(1, 99), Jemput: pilih(JEMPUT), Drop: priv ? pilih(JEMPUT) : '', Harga: harga, DP: dp, Pesan: tambahHari(mulai, -antara(4, 48)) };
+      if (o.Pesan > today) o.Pesan = hari(-antara(0, 3));
+      if (tab === 'Private YB') { o.Itin = LINK_ITIN; o.Cek = { KENDARAAN: pilih(['Hiace Kantor', 'Rama Trans', 'Elf Kantor', 'Bus Pariwisata']), JEEP: pilih(['Jeep Kantor', 'Jeep Hendrik', '-']), GUIDE: pilih(['Ikrom', 'Faad', 'Yunus']), 'TIM DOKUMENTASI': pilih(['Ichang', 'Tendy', '-']), PENGINAPAN: pilih(['Kokoon Hotel', 'eL Hotel', 'Dialog Hotel', 'Santika Hotel']), 'KAPAL SELATAN': pilih(['Hamzah', '-']), 'LAIN-LAIN': pilih(['-', 'Outbound', 'Gala dinner']) }; }
+      tambahan.push(tambah(tab, o));
+    }
+    // Pesanan yang meniru contoh manifest klien (KISVAN SIMARMATA, 3D2N, TL Yunus) — dijadwalkan sebentar lagi
+    var KIS = tambah('Private YB', { Nama: 'Kisvan Simarmata', PIC: 'Agung', HP: '08119461463', Pax: 4, Trip: 'Private Trip 3D2N Banyuwangi', Mulai: hari(9), Selesai: hari(11), Asal: 'Jakarta', Sumber: 'Repeat Order', Email: 'kisvan@example.com', Jemput: 'Bandara BWI', Drop: 'Dialog Hotel', Harga: 2150000, DP: 4300000, Itin: LINK_ITIN, Pesan: hari(-12),
+      Cek: { KENDARAAN: 'MPV (Innova) Kantor', JEEP: '-', GUIDE: 'Yunus', 'TIM DOKUMENTASI': '-', PENGINAPAN: 'Dialog Hotel', 'KAPAL SELATAN': '-', 'LAIN-LAIN': 'ATV Capas' } });
+
+    // ---------- Paket kalkulasi reguler (dipakai otomatis per nama trip)
+    var PAKET = {
+      'Open Trip Ijen Midnight': ['YB', [['TRANSPORT ELF (BAGI RATA)', 0, 70000, 'TIDAK'], ['GUIDE IJEN', 0, 25000, 'YA', 'MAN POWER'], ['KARCIS IJEN', 0, 15000, 'YA', 'KARCIS'], ['MASKER GAS', 0, 15000, 'YA', 'AGEN/LAIN-LAIN'], ['AIR MINERAL', 0, 5000, 'YA', 'KONSUMSI'], ['SERVICE', 0, 10000, 'YA', 'SERVICE']]],
+      'Open Trip Ijen Sunrise': ['YB', [['TRANSPORT ELF (BAGI RATA)', 0, 70000, 'TIDAK'], ['GUIDE IJEN', 0, 25000, 'YA', 'MAN POWER'], ['KARCIS IJEN', 0, 15000, 'YA', 'KARCIS'], ['MASKER GAS', 0, 15000, 'YA', 'AGEN/LAIN-LAIN'], ['SARAPAN', 0, 25000, 'YA', 'KONSUMSI'], ['SERVICE', 0, 10000, 'YA', 'SERVICE']]],
+      'Open Trip Baluran': ['YB', [['JEEP BALURAN (BAGI RATA)', 0, 90000, 'TIDAK'], ['GUIDE', 0, 25000, 'YA', 'MAN POWER'], ['KARCIS BALURAN', 0, 25000, 'YA', 'KARCIS'], ['MAKAN SIANG', 0, 30000, 'YA', 'KONSUMSI'], ['SERVICE', 0, 10000, 'YA', 'SERVICE']]],
+      'Open Trip Djawatan Baluran': ['YB', [['JEEP BALURAN (BAGI RATA)', 0, 90000, 'TIDAK'], ['GUIDE', 0, 25000, 'YA', 'MAN POWER'], ['KARCIS DJAWATAN', 0, 10000, 'YA', 'KARCIS'], ['KARCIS BALURAN', 0, 25000, 'YA', 'KARCIS'], ['MAKAN SIANG', 0, 30000, 'YA', 'KONSUMSI'], ['SERVICE', 0, 10000, 'YA', 'SERVICE']]],
+      'Open Trip Keliling Banyuwangi 3D2N': ['YB', [['HIACE (BAGI RATA)', 0, 260000, 'TIDAK'], ['PENGINAPAN 2 MALAM', 0, 320000, 'TIDAK'], ['PAKET PULAU', 0, 120000, 'TIDAK'], ['TL', 0, 60000, 'YA', 'MAN POWER'], ['MAKAN DAY 1', 0, 60000, 'YA', 'KONSUMSI'], ['MAKAN DAY 2', 0, 60000, 'YA', 'KONSUMSI'], ['KARCIS WISATA', 0, 85000, 'YA', 'KARCIS'], ['MASKER GAS', 0, 15000, 'YA', 'AGEN/LAIN-LAIN'], ['SERVICE', 0, 20000, 'YA', 'SERVICE']]],
+      'Open Trip Keliling Banyuwangi 2D1N': ['YB', [['HIACE (BAGI RATA)', 0, 180000, 'TIDAK'], ['PENGINAPAN 1 MALAM', 0, 160000, 'TIDAK'], ['TL', 0, 45000, 'YA', 'MAN POWER'], ['MAKAN DAY 1', 0, 60000, 'YA', 'KONSUMSI'], ['KARCIS WISATA', 0, 60000, 'YA', 'KARCIS'], ['SERVICE', 0, 15000, 'YA', 'SERVICE']]],
+      'Open Trip Tabuhan Only': ['SB', [['KAPTEN & ABK', 0, 20000, 'YA', 'MAN POWER', 'KAPTEN'], ['BBM, OLI', 0, 15000, 'TIDAK', '', 'BBMOLI'], ['KONSUMSI + AIR MINERAL', 0, 10000, 'YA', 'KONSUMSI', 'KONSUMSB'], ['ASURANSI', 0, 3000, 'TIDAK', '', 'ASURANSI'], ['TIKET', 0, 15000, 'YA', 'KARCIS', 'TIKET']]],
+      'Open Trip Menjangan Tabuhan': ['SB', [['KAPTEN & ABK', 0, 40000, 'YA', 'MAN POWER', 'KAPTEN'], ['BBM, OLI', 0, 35000, 'TIDAK', '', 'BBMOLI'], ['KORLAP', 0, 15000, 'YA', 'MAN POWER', 'KORLAP'], ['KONSUMSI + AIR MINERAL', 0, 35000, 'YA', 'KONSUMSI', 'KONSUMSB'], ['ASURANSI', 0, 3000, 'TIDAK', '', 'ASURANSI'], ['GUIDE', 0, 25000, 'YA', 'MAN POWER', 'GUIDE'], ['TIKET', 0, 35000, 'YA', 'KARCIS', 'TIKET'], ['PERAWATAN ALAT', 0, 5000, 'TIDAK', '', 'ALAT']]],
+      'Open Trip Sunrise Boat Menjangan': ['SB', [['KAPTEN & ABK', 0, 45000, 'YA', 'MAN POWER', 'KAPTEN'], ['BBM, OLI', 0, 40000, 'TIDAK', '', 'BBMOLI'], ['KORLAP', 0, 15000, 'YA', 'MAN POWER', 'KORLAP'], ['KONSUMSI + AIR MINERAL', 0, 40000, 'YA', 'KONSUMSI', 'KONSUMSB'], ['ASURANSI', 0, 3000, 'TIDAK', '', 'ASURANSI'], ['GUIDE', 0, 25000, 'YA', 'MAN POWER', 'GUIDE'], ['TIKET', 0, 35000, 'YA', 'KARCIS', 'TIKET'], ['PERAWATAN ALAT', 0, 5000, 'TIDAK', '', 'ALAT']]],
+      'PT Tabuhan Only': ['SB', [['KAPTEN & ABK', 250000, 0, 'YA', 'MAN POWER', 'KAPTEN'], ['BBM, OLI', 200000, 0, 'TIDAK', '', 'BBMOLI'], ['KONSUMSI + AIR MINERAL', 35000, 30000, 'YA', 'KONSUMSI', 'KONSUMSB'], ['ASURANSI', 0, 3000, 'TIDAK', '', 'ASURANSI'], ['TIKET', 0, 15000, 'YA', 'KARCIS', 'TIKET']]],
+      'PT Menjangan Tabuhan': ['SB', [['KAPTEN & ABK', 500000, 0, 'YA', 'MAN POWER', 'KAPTEN'], ['BBM, OLI', 300000, 0, 'TIDAK', '', 'BBMOLI'], ['KORLAP', 150000, 0, 'YA', 'MAN POWER', 'KORLAP'], ['KONSUMSI + AIR MINERAL', 35000, 50000, 'YA', 'KONSUMSI', 'KONSUMSB'], ['ASURANSI', 0, 3000, 'TIDAK', '', 'ASURANSI'], ['GUIDE', 400000, 0, 'YA', 'MAN POWER', 'GUIDE'], ['TIKET', 0, 35000, 'YA', 'KARCIS', 'TIKET'], ['PERAWATAN ALAT', 0, 5000, 'TIDAK', '', 'ALAT']]],
+      'Tabuhan Watersport Paket Jet Ski Weekend': ['YB', [['SEWA JET SKI', 0, 180000, 'TIDAK', '', 'KAPAL'], ['BBM JET SKI', 0, 40000, 'TIDAK', '', 'BBM'], ['INSTRUKTUR', 0, 25000, 'YA', 'MAN POWER'], ['SERVICE', 0, 10000, 'YA', 'SERVICE']]],
+      'Tabuhan Watersport Paket Paddle Board Weekend': ['YB', [['SEWA PADDLE BOARD', 0, 60000, 'TIDAK', '', 'KAPAL'], ['INSTRUKTUR', 0, 20000, 'YA', 'MAN POWER'], ['SERVICE', 0, 10000, 'YA', 'SERVICE']]],
+      'Tabuhan Watersport Paket Banana Boat': ['YB', [['SEWA BANANA BOAT', 0, 50000, 'TIDAK', '', 'KAPAL'], ['INSTRUKTUR', 0, 15000, 'YA', 'MAN POWER'], ['SERVICE', 0, 8000, 'YA', 'SERVICE']]],
+      'Private Trip 2D1N Ijen & Baluran': ['YB', [['HIACE', 1800000, 0, 'TIDAK'], ['JEEP BALURAN', 900000, 0, 'TIDAK'], ['PENGINAPAN', 0, 250000, 'TIDAK'], ['TL', 750000, 0, 'YA', 'MAN POWER'], ['GUIDE IJEN', 350000, 0, 'YA', 'MAN POWER'], ['MAKAN', 0, 120000, 'YA', 'KONSUMSI'], ['KARCIS IJEN', 0, 15000, 'YA', 'KARCIS'], ['BALURAN', 0, 25000, 'YA', 'KARCIS'], ['MASKER GAS', 0, 15000, 'YA', 'AGEN/LAIN-LAIN'], ['SERVICE', 200000, 0, 'YA', 'SERVICE']]],
+      'Private Trip 3D2N Banyuwangi': ['YB', [['HIACE / BUS', 2600000, 0, 'TIDAK'], ['JEEP BALURAN', 900000, 0, 'TIDAK'], ['PENGINAPAN 2 MALAM', 0, 450000, 'TIDAK'], ['PAKET PULAU', 0, 150000, 'TIDAK'], ['TL', 1200000, 0, 'YA', 'MAN POWER'], ['TIM DOKUMENTASI', 900000, 0, 'YA', 'MAN POWER'], ['AIR MINERAL', 0, 10000, 'YA', 'KONSUMSI'], ['MAKAN DAY 1', 0, 90000, 'YA', 'KONSUMSI'], ['MAKAN DAY 2', 0, 90000, 'YA', 'KONSUMSI'], ['DJAWATAN', 0, 10000, 'YA', 'KARCIS'], ['IJEN', 0, 15000, 'YA', 'KARCIS'], ['BALURAN', 0, 25000, 'YA', 'KARCIS'], ['MASKER GAS', 0, 15000, 'YA', 'AGEN/LAIN-LAIN'], ['SERVICE', 300000, 0, 'YA', 'SERVICE']]],
+      'Private Trip 4D3N Banyuwangi': ['YB', [['HIACE / BUS', 3400000, 0, 'TIDAK'], ['JEEP BALURAN', 900000, 0, 'TIDAK'], ['PENGINAPAN 3 MALAM', 0, 650000, 'TIDAK'], ['PAKET PULAU', 0, 150000, 'TIDAK'], ['TL', 1600000, 0, 'YA', 'MAN POWER'], ['TIM DOKUMENTASI', 1200000, 0, 'YA', 'MAN POWER'], ['AIR MINERAL', 0, 15000, 'YA', 'KONSUMSI'], ['MAKAN DAY 1', 0, 90000, 'YA', 'KONSUMSI'], ['MAKAN DAY 2', 0, 90000, 'YA', 'KONSUMSI'], ['MAKAN DAY 3', 0, 90000, 'YA', 'KONSUMSI'], ['DJAWATAN', 0, 10000, 'YA', 'KARCIS'], ['IJEN', 0, 15000, 'YA', 'KARCIS'], ['BALURAN', 0, 25000, 'YA', 'KARCIS'], ['PULAU MERAH', 0, 10000, 'YA', 'KARCIS'], ['MASKER GAS', 0, 15000, 'YA', 'AGEN/LAIN-LAIN'], ['SERVICE', 400000, 0, 'YA', 'SERVICE']]]
+    };
+    function itemDari(def, bagian) { return def.map(function (x) { var keTL = x[3] === 'YA' ? 'YA' : 'TIDAK', g = keTL === 'YA' ? (x[4] || tebakGrup(x[0])) : ''; return { Uraian: x[0], Tetap: x[1], Per_Pax: x[2], Ke_TL: keTL, Grup: g, Kolom: x[5] || tebakKolom(bagian, x[0], g) }; }); }
+    var adm = { nama: 'Nadia Putri', peran: 'Admin', email: 'admin@yukbanyuwangi.demo', id: 'USR-0001' }, fin = { nama: 'Laras Wening', peran: 'Finance', email: 'finance@yukbanyuwangi.demo', id: 'USR-0003' };
+    var txA = new Tx(H, adm), txF = new Tx(H, fin);
+    Object.keys(PAKET).forEach(function (n) { A['paket.simpan'](txA, { Nama: n, Bagian: PAKET[n][0], items: itemDari(PAKET[n][1], PAKET[n][0]), Catatan: 'Paket reguler (contoh)' }); });
+
+    // Kalkulasi Indofarma = isi file KALKULASI_AGUNG (Kalkulasi CS) + MASKER GAS dari Dummy Kalkulasi Budget
+    var CS_IND = [['BUS', 10000000, 'TIDAK'], ['JEEP BALURAN', 5000000, 'TIDAK'], ['TL', 1500000, 'YA', 'MAN POWER'], ['TIM DOKUMENTASI', 2500000, 'YA', 'MAN POWER'], ['AIR MINERAL', 500000, 'YA', 'KONSUMSI'], ['MAKAN DAY 1', 4000000, 'YA', 'KONSUMSI'], ['MAKAN DAY 2', 4000000, 'YA', 'KONSUMSI'], ['MAKAN DAY 3', 400000, 'YA', 'KONSUMSI'],
+      ['PAKET PULAU', 5000000, 'TIDAK'], ['DJAWATAN', 500000, 'YA', 'KARCIS'], ['PAKET PULAU SB', 5000000, 'TIDAK'], ['PAKET GREEN ISLAND', 2000000, 'YA', 'KARCIS'], ['PULAU MERAH', 500000, 'YA', 'KARCIS'], ['BALURAN', 500000, 'YA', 'KARCIS'], ['GWD', 500000, 'YA', 'KARCIS'], ['IJEN', 500000, 'YA', 'KARCIS'], ['GUIDE IJEN', 500000, 'YA', 'MAN POWER'], ['SERVICE', 500000, 'YA', 'SERVICE']];
+    A['kalkulasi.simpan'](txA, { ID_Pesanan: IND.ID_Pesanan, Sumber: 'CS', Link_CS: LINK_KAL, Pax: 30, items: CS_IND.map(function (x) { return { Uraian: x[0], Tetap: x[1], Per_Pax: 0, Ke_TL: x[2], Grup: x[3] || '', Asal: 'CS' }; }).concat([{ Uraian: 'MASKER GAS', Tetap: 500000, Per_Pax: 0, Ke_TL: 'YA', Grup: 'AGEN/LAIN-LAIN', Asal: 'Manual' }]) });
+    A['kalkulasi.simpan'](txA, { ID_Pesanan: KIS.ID_Pesanan, Sumber: 'Manual', Pax: 4, items: [['DRIVER TL', 825000, 'MAN POWER'], ['SERVICE', 150000, 'SERVICE'], ['BBM', 300000, 'AGEN/LAIN-LAIN'], ['AIR MINERAL 1 DUS', 50000, 'KONSUMSI'], ['KONSUMSI 1X (MM DAY 2)', 200000, 'KONSUMSI'], ['DJAWATAN', 50000, 'KARCIS'], ['GWD', 40000, 'KARCIS'], ['BALURAN', 134000, 'KARCIS']].map(function (x) { return { Uraian: x[0], Tetap: x[1], Per_Pax: 0, Ke_TL: 'YA', Grup: x[2] }; })
+      .concat([{ Uraian: 'MPV (INNOVA) KANTOR', Tetap: 1500000, Per_Pax: 0, Ke_TL: 'TIDAK', Kolom: 'KEND' }, { Uraian: 'PENGINAPAN DIALOG HOTEL', Tetap: 1700000, Per_Pax: 0, Ke_TL: 'TIDAK', Kolom: 'HOTEL' }, { Uraian: 'PAKET PULAU', Tetap: 1400000, Per_Pax: 0, Ke_TL: 'TIDAK', Kolom: 'KAPAL' }, { Uraian: 'ATV CAPAS', Tetap: 800000, Per_Pax: 0, Ke_TL: 'TIDAK', Kolom: 'LL' }]) });
+    // Pesanan lain: kalkulasi dari paket bila trip sudah lewat / dekat (menunjukkan alur reguler)
+    var semua = tx.all('Pesanan').slice();
+    semua.forEach(function (p) {
+      if (p.ID_Pesanan === IND.ID_Pesanan || p.ID_Pesanan === KIS.ID_Pesanan) return;
+      var pk = PAKET[p.Trip]; if (!pk) return; var h = selisihHari(today, p.Tgl_Mulai);
+      if (h > 16 && acak() < 0.7) return;
+      A['kalkulasi.simpan'](txA, { ID_Pesanan: p.ID_Pesanan, Sumber: 'Paket', Paket: p.Trip, Pax: p.Pax, items: itemDari(pk[1], pk[0]).map(function (x) { x.Asal = 'Paket'; return x; }) });
     });
 
-    // Realisasi anggaran trip selesai — dicatat Admin, dilaporkan, diaudit Finance:
-    //   DRW & BRM final (masuk laba rugi) · LBJ diajukan & MELEBIHI RAB · BLT dikembalikan untuk perbaikan
-    var FAKTOR = { DRW: [0.98, 1.0, 0.97, 1.02, 1.0, 0.96, 1.0], BRM: [0.95, 1.0, 1.0, 1.0, 1.0, 0.92, 0.97, 1.0, 1.0], LBJ: [1.07, 1.0, 1.0, 1.02, 1.0, 1.04, 1.0, 1.0, 1.0], BLT: [1.0, 1.0, 1.08, 1.0, 1.0] };
-    var TAMBAHAN = { LBJ: [['Biaya Tak Terduga', 'Speedboat evakuasi — cuaca buruk hari ke-3', 6500000, 'Gelombang tinggi, rute Padar dialihkan']], BRM: [['Konsumsi', 'Makan malam tambahan rombongan', 1450000, '']] };
-    var PELAPOR = { DRW: STAF.maya, BRM: STAF.raka, LBJ: STAF.maya, BLT: STAF.dimas };
-    Object.keys(FAKTOR).forEach(function (k) {
-      var t = trip[k], f = FAKTOR[k], rows = [];
-      RAB[k].slice(0, f.length).forEach(function (it, ii) { rows.push([it[0], it[1], Math.round(it[3] * it[5] * f[ii] / 1000) * 1000, f[ii] < 1 ? 'Hemat dari negosiasi' : f[ii] > 1 ? 'Kenaikan harga BBM / kurs' : '']); });
-      (TAMBAHAN[k] || []).forEach(function (x) { rows.push(x); });
-      rows.forEach(function (x, ii) {
-        tx.insert('Realisasi_Biaya', { ID_Trip: t.ID_Trip, Kategori: x[0], Uraian: x[1], Nominal: x[2], Tanggal: tambahHari(t.Tgl_Pulang, -(ii % 3)), Link_Bukti: 'demo:nota-' + (ii + 1) + '.jpg', Status: 'Tercatat', Diinput_Oleh: PELAPOR[k], Catatan: x[3], Dibuat: tambahHari(t.Tgl_Pulang, ii % 2) + 'T15:0' + (ii % 10) + ':00', Catatan_Verifikasi: '', Diverifikasi_Oleh: '' });
-      });
+    // Manifest: Indofarma (terbit) & Kisvan (terbit, meniru contoh klien) + beberapa draft
+    var ITIN_IND = 'Hari Pertama\n07:00 Penjemputan di Stasiun / Hotel sekitar Banyuwangi. Jika anda menggunakan flight maka trip ini masih bisa menyesuaikan dengan jadwal kedatangan.\n07:30 Sarapan pagi di resto lokal dan dilanjutkan Persiapan untuk melanjutkan tour\n10:00 Mengunjungi Hutan De Djawatan\n11:30 Menuju Taman Nasional Baluran (Bisa additional charge jeep safari*)\n13:00 Makan siang di resto lokal searah perjalanan kawasan Baluran\n14:00 Sampai di Taman Nasional Baluran, menikmati lansekap savana Bekol lewat menara pandang\n14:30 Mengunjungi pantai Bama dan mangrove trail\n15:30 Meninggalkan Taman Nasional Baluran, menikmati panorama sunset di savana Bekol\n18:30 Makan malam\n20:00 Kembali ke hotel dan istirahat\nHari Kedua\n07:00 Makan pagi di hotel\n08:00 Berangkat menuju meeting point Pantai Grandwatudodol\n09:00 Menyeberang ke pulau Menjangan dari pantai Watudodol, estimasi perjalanan satu jam\n10:00 Registrasi pengunjung, agenda bebas dan photo session di dermaga Pulau Menjangan\n11:00 Snorkeling di spot pertama\n12:00 Makan siang\n13:00 Snorkeling di spot kedua\n14:00 Mengunjungi Pulau Tabuhan\n15:00 Meninggalkan Pulau Tabuhan\n16:00 Bilas – bilas dan diantar kembali ke Hotel\n19:00 Makan malam kuliner daerah Banyuwangi\n20:30 Kembali ke Hotel dan istirahat untuk persiapan naik ke Ijen\nHari Ketiga\n00:10 Penjemputan Hotel sekitar Banyuwangi Kota\n00:30 Berangkat menuju Kawah Ijen\n01:30 Sampai Paltuding, kemudian konfirmasi tiket online\n02:00 Persiapan melakukan pendakian\n04:00 Sampai area Puncak, panorama kawah ijen dan Sunrise Point\n06:00 Kembali ke Paltuding\n08:00 Peserta diantar ke meeting point penjemputan\n09:00 Paket wisata berakhir, diantar kembali ke Stasiun / Bandara / Hotel';
+    var ITIN_KIS = 'Hari Pertama\n10.30 Landing Bandara Banyuwangi\n11.00 Menuju ke hutan de Djawatan\n12.00 Explore Djawatan\n13.30 Menuju ke Banyuwangi kota\n14.30 Check in penginapan, free time\nHari Kedua\n07:30 Bertemu di Meeting Point Grand Watu Dodol (Pondok Bambu)\n08.00 Persiapan dan briefing peserta\n08:10 Menyeberang ke pulau Menjangan dari pantai Watudodol dengan estimasi perjalanan 45 menit dengan view pasir putih dan gradasi pantai taman nasional Bali Barat\n09:00 Registrasi pengunjung, dilanjut agenda bebas dan photo session di dermaga pulau Menjangan dan takat Pasir\n10:00 Freedive di spot palung pertama.\n11:00 Snorkeling di spot mangrove point\n12:00 Menuju ke pulau tabuhan\n13:00 Explore pulau tabuhan dan makan siang (lunch box)\n15.00 Kembali di dermaga Grand Watu dodol\n16.30 Perkiraan tiba kembali di hotel. Bersih bersih dan free time\n19.00 Makan malam kuliner khas Banyuwangi\nHari Ketiga\n08.30 Menuju ke Capas adventure\n09.30 ATV adventure di daerah capas dengan pemandangan persawahan\n11.30 Selesai kegiatan atv adventure, bersih bersih\n12.30 Menuju ke Taman Nasional Baluran\n14.00 Explore Taman Nasional Baluran (evergreen forest, pohon raisa, relics banteng, savannah bekol, pantai Bama dan mangrove trail)\n17.00 Diantar kembali ke hotel. Tour 3D2N selesai';
+    function tlRef(n) { var t = tlId[n]; return { id: t.ID_TL, nama: t.Nama }; }
+    A['manifest.simpan'](txA, { ID_Pesanan: IND.ID_Pesanan, PIC_Kantor: 'Riyan Uceng', TL: [tlRef('Ikrom'), tlRef('Ichang')], Durasi: '3D2N', Data_Tamu: { jemput: 'Stasiun Banyuwangi Kota', drop: 'Stasiun Banyuwangi Kota' }, Checklist: checklistDefault(IND), Catatan: 'Setiap selesai trip perharinya memberikan update posisi kendaraan\nTrip Pulau include Lunch Box\nOutbound di hari kedua sore (koordinasi dengan PIC)', Itinerary: ITIN_IND,
+      Peserta: ['Budi Hartanto', 'Sri Wahyuni', 'Andre Kurniawan', 'Melinda Sari', 'Rudi Setiawan', 'Yuliana Dewi', 'Eko Prasetyo', 'Fitri Handayani'].map(function (n) { return { nama: n }; }) });
+    A['manifest.catatTerbit'](txA, { ID_Pesanan: IND.ID_Pesanan, url: '', fileId: 'demo-manifest-indofarma' });
+    A['manifest.simpan'](txA, { ID_Pesanan: KIS.ID_Pesanan, PIC_Kantor: 'Riyan Uceng', TL: [tlRef('Yunus')], Durasi: '3D2N', Data_Tamu: { nama: 'KISVAN SIMARMATA', jemput: 'BANDARA BWI', drop: 'DIALOG HOTEL' },
+      Checklist: [{ item: 'Mobil', detail: 'MPV (Innova) Kantor' }, { item: 'Driver', detail: 'Yunus' }, { item: 'Guide', detail: 'Yunus' }], Catatan: 'ATV Capas by kantor\nSetiap selesai trip perharinya memberikan update posisi kendaraan\nTrip Pulau include Lunch Box', Itinerary: ITIN_KIS,
+      Peserta: [{ nama: 'Kisvan Simarmata', hp: '08119461463' }, { nama: 'Ruth Simarmata' }, { nama: 'Daniel Simarmata' }, { nama: 'Grace Simarmata' }] });
+    A['manifest.catatTerbit'](txA, { ID_Pesanan: KIS.ID_Pesanan, url: '', fileId: 'demo-manifest-kisvan' });
+    A['manifest.catatUndang'](txA, { ID_Pesanan: KIS.ID_Pesanan, emails: [tlId.Yunus.Email] });
+    tambahan.filter(function (p) { var h = selisihHari(today, p.Tgl_Mulai); return h >= 0 && h <= 20 && tx.get('Kalkulasi', p.ID_Pesanan); }).slice(0, 3).forEach(function (p) {
+      var cekP = checklistDefault(p), g = (parseJson(p.Checklist, {}) || {}).GUIDE, tl = g && tlId[g] ? [tlRef(g)] : [tlRef(pilih(['Yunus', 'Ikrom', 'Faad']))];
+      A['manifest.simpan'](txA, { ID_Pesanan: p.ID_Pesanan, TL: tl, Checklist: cekP, Catatan: 'Setiap selesai trip perharinya memberikan update posisi kendaraan', Itinerary: /Private/.test(p.Tab) ? ITIN_IND : '' });
     });
-    Object.keys(trip).forEach(function (k) { recalcRekap(tx, trip[k].ID_Trip); });
-    function auditDemo(k, kep, oleh, catatan, tolak) {
-      var t = trip[k], ix0 = indeks(tx.D), r0 = rekapTrip(tx.D, ix0, t, today), tLapor = tambahHari(t.Tgl_Pulang, 2) + 'T09:30:00', tAudit = tambahHari(t.Tgl_Pulang, 4) + 'T16:10:00';
-      var jelas = r0.overBudget ? 'Cuaca buruk hari ke-3: rute dialihkan dengan speedboat evakuasi & harga BBM kapal naik. Bukti nota terlampir.' : '';
-      tx.update('Rekap_Operasional', t.ID_Trip, { Status_Audit: RLS.DIAJUKAN, Tgl_Lapor: tLapor, Dilapor_Oleh: PELAPOR[k], Penjelasan_Lapor: jelas });
-      tx.insert('Log_Revisi_Budget', { ID_Budget: r0.budgetId, ID_Trip: t.ID_Trip, Siapa: PELAPOR[k], Kapan: tLapor, Item: 'REALISASI — Dilaporkan ke Finance', Nilai_Lama: 'RAB v' + r0.versiBudget + ' ' + rp(r0.budget), Nilai_Baru: 'Realisasi ' + rp(r0.realisasi) + (r0.overBudget ? ' · MELEBIHI RAB ' + rp(r0.lebih) + ' (' + r0.lebihPersen + '%)' : ' · hemat ' + rp(r0.budget - r0.realisasi)), Alasan: jelas });
-      if (!kep) return;
-      (tolak || []).forEach(function (x) { var it = tx.where('Realisasi_Biaya', function (n) { return n.ID_Trip === t.ID_Trip && n.Uraian === x[0]; })[0]; if (it) tx.update('Realisasi_Biaya', it.ID_Realisasi, { Status: 'Ditolak', Catatan_Verifikasi: x[1], Diverifikasi_Oleh: oleh }); });
-      if (kep === 'setujui') tx.where('Realisasi_Biaya', function (n) { return n.ID_Trip === t.ID_Trip && n.Status !== 'Ditolak'; }).forEach(function (n) { tx.update('Realisasi_Biaya', n.ID_Realisasi, { Status: 'Disetujui', Diverifikasi_Oleh: oleh }); });
-      recalcRekap(tx, t.ID_Trip);
-      var r1 = rekapTrip(tx.D, indeks(tx.D), t, today), st1 = kep === 'setujui' ? RLS.FINAL : RLS.PERBAIKAN;
-      var patch = { Status_Audit: st1, Diverifikasi_Oleh: oleh, Tgl_Verifikasi: tAudit, Catatan_Audit: catatan };
-      if (st1 === RLS.FINAL) { patch.Biaya_Final = r1.realisasi; patch.Laba_Final = r1.pendapatan - r1.realisasi; patch.Tgl_Final = tAudit; }
-      tx.update('Rekap_Operasional', t.ID_Trip, patch);
-      tx.insert('Log_Revisi_Budget', { ID_Budget: r0.budgetId, ID_Trip: t.ID_Trip, Siapa: oleh, Kapan: tAudit, Item: 'REALISASI — Audit Finance: ' + (st1 === RLS.FINAL ? 'DISETUJUI (final)' : 'PERLU PERBAIKAN'), Nilai_Lama: 'Realisasi dilaporkan ' + rp(r0.realisasi), Nilai_Baru: 'Diakui ' + rp(r1.realisasi) + ((tolak || []).length ? ' · ' + tolak.length + ' nota ditolak' : '') + (st1 === RLS.FINAL ? ' · laba final ' + rp(r1.pendapatan - r1.realisasi) : ''), Alasan: catatan });
-    }
-    auditDemo('DRW', 'setujui', STAF.sinta, 'Nota lengkap & sesuai RAB.');
-    auditDemo('BRM', 'setujui', STAF.rian, 'Disetujui. 1 nota makan tambahan ditolak karena tanpa stempel vendor.', [['Makan malam tambahan rombongan', 'Nota tanpa stempel/kop vendor — tidak bisa diakui']]);
-    auditDemo('LBJ', '');
-    auditDemo('BLT', 'perbaikan', STAF.sinta, 'Nota sewa mobil Innova belum dilampirkan. Mohon unggah bukti lalu laporkan ulang.', [['Mobil Innova 3 hari', 'Bukti nota belum ada']]);
 
-    // Manifest
-    pjRows.forEach(function (x, i) {
-      var st = statusTrip(x.t, today), pj = tx.get('Penjualan', x.pj.ID_Penjualan);
-      if (!tx.where('Invoice', function (v) { return v.ID_Penjualan === pj.ID_Penjualan; }).length) return;
-      var m = pastikanManifest(tx, pj), final = st === 'Selesai' || (x.t.Kode.indexOf('PDR') > -1 && x.sk === 'L');
-      if (final) tx.update('Manifest', m.ID_Manifest, { Status: 'Final', Versi: i % 5 === 0 ? 2 : 1, Tgl_Final: tambahHari(x.t.Tgl_Berangkat, -5) + 'T11:00:00', Link_File: '', File_ID: simulasi ? 'demo' : '', ID_Lampiran_Calendar: simulasi ? pj.ID_Event : '', Dibuat_Oleh: x.staf, Diperbarui: tambahHari(x.t.Tgl_Berangkat, -5) + 'T11:00:00' });
+    // Rekap: trip yang sudah lewat → tambahan & kunci margin
+    tx.all('Pesanan').forEach(function (p) {
+      var inf = infoPesanan(p, tx.S()); if (!inf.selesai || inf.selesai >= today || !tx.get('Kalkulasi', p.ID_Pesanan)) return;
+      var tamb = [];
+      if (p.ID_Pesanan === ANG.ID_Pesanan) tamb = [{ kolom: 'KONSUM', jenis: 'Over budget', uraian: 'Tambahan makan malam rombongan (hari ke-3)', nominal: 750000 }, { kolom: 'LL', jenis: 'Over budget', uraian: 'Parkir & tol tambahan', nominal: 185000 }];
+      else if (p.ID_Pesanan === IND.ID_Pesanan) tamb = [{ kolom: 'BBM', jenis: 'Non-manifest', uraian: 'BBM bus (dibayar admin)', nominal: 1200000 }, { kolom: 'INSENTIF', jenis: 'Insentif', uraian: 'Insentif CS (Agung)', nominal: 750000 }];
+      else if (acak() < 0.35) tamb = [{ kolom: inf.bagian === 'SB' ? 'KONSUMSB' : 'KONSUM', jenis: 'Over budget', uraian: 'Konsumsi tambahan di lapangan', nominal: Math.round(inf.total * pilih([0.03, 0.05, 0.08]) / 1000) * 1000 }];
+      if (tamb.length || acak() < 0.5) A['rekap.simpan'](txA, { ID_Pesanan: p.ID_Pesanan, Tambahan: tamb, Kapal: inf.bagian === 'SB' ? pilih(['SB Harno', 'SB Bayu', 'SB Samudra']) : '' });
+      var umur = selisihHari(inf.selesai, today);
+      if (umur > 20 || p.ID_Pesanan === IND.ID_Pesanan || p.ID_Pesanan === ANG.ID_Pesanan) { A['rekap.ajukan'](txA, { ID_Pesanan: p.ID_Pesanan }); A['rekap.kunci'](txF, { ID_Pesanan: p.ID_Pesanan, catatan: 'Sesuai nota' }); }
+      else if (umur > 4) A['rekap.ajukan'](txA, { ID_Pesanan: p.ID_Pesanan });
     });
-    ['DRW', 'BRM', 'LBJ', 'BLT'].forEach(function (k) { tx.insert('Manifest', { Tipe: 'Per Trip', ID_Trip: trip[k].ID_Trip, Status: 'Final', Versi: 1, Tgl_Final: tambahHari(trip[k].Tgl_Berangkat, -3) + 'T09:00:00', File_ID: simulasi ? 'demo' : '', Dibuat_Oleh: STAF.maya, Diperbarui: tambahHari(trip[k].Tgl_Berangkat, -3) + 'T09:00:00' }); });
 
-    // CRM + log aktivitas + riwayat notifikasi (simulasi)
-    A['crm.sync'](tx, {});
-    tx.all('CRM_Kontak').forEach(function (k, i) { if (k.NoWA) tx.update('CRM_Kontak', k.KontakID, { StatusWA: i % 11 === 5 ? 'Tidak Terdaftar' : i % 6 === 3 ? '' : 'Terdaftar', CekWAAt: i % 6 === 3 ? '' : wkt(-(i % 9)) }); });
-    var AKSI = [['Invoice terbit', 'Finansial & Invoice', 'maya'], ['Manifest final v1', 'Manifest & Customer', 'maya'], ['Setujui & aktifkan budget v3', 'Budgeting & RAB', 'sinta'], ['Input realisasi biaya', 'Budgeting & RAB', 'rian'], ['Input pembayaran', 'Finansial & Invoice', 'raka'], ['Ubah pengaturan', 'Sistem', 'dimas'], ['Tambah customer', 'Manifest & Customer', 'raka'], ['Review peserta: sudah masuk daftar', 'Manifest & Customer', 'maya'], ['Audit rekap: Terverifikasi', 'Budgeting & RAB', 'sinta'], ['Unduh laporan laba rugi', 'Finansial & Invoice', 'sinta'], ['Login', 'Sistem', 'raka'], ['Ajukan budget v1', 'Budgeting & RAB', 'raka']];
-    var OBJ = tx.all('Invoice').map(function (i) { return i.No_Invoice; });
-    for (var li = 0; li < 46; li++) {
-      var a = AKSI[li % AKSI.length], who = STAF[a[2]];
-      tx.insert('Log_Aktivitas', { Waktu: wkt(-Math.floor(li / 7), pad(8 + (li % 10), 2) + ':' + pad((li * 13) % 60, 2) + ':' + pad((li * 7) % 60, 2)), Pengguna: who, Peran: a[2] === 'sinta' || a[2] === 'rian' ? 'Finance' : 'Admin', Aksi: a[0], Kategori: a[1], Objek: a[1] === 'Finansial & Invoice' ? OBJ[li % OBJ.length] : a[1] === 'Budgeting & RAB' ? trip[['LBJ', 'BLT', 'PDR', 'DRW'][li % 4]].Kode : a[1] === 'Sistem' ? 'Pengaturan' : cust[li % cust.length].ID_Customer, Detail: a[0] === 'Ubah pengaturan' ? 'PALET, FONT_HEAD' : a[0] === 'Login' ? 'Masuk dari Chrome · Android' : '' });
-    }
-    if (simulasi) {
-      // Mode Demo: kanal disimulasikan (tidak ada pesan sungguhan), jadi saklar utama dinyalakan agar alur lengkap terlihat
-      tx.setS('NOTIF_WA_AKTIF', 'YA'); tx.setS('NOTIF_EMAIL_AKTIF', 'YA'); tx.setS('NOTIF_KIRIM_DEMO', 'YA');
-      tx.all('Invoice').slice(-14).forEach(function (inv, i) {
-        var pj = tx.get('Penjualan', inv.ID_Penjualan), c = tx.get('Customer', pj.ID_Customer);
-        tx.insert('AntrianNotif', { Kanal: i % 3 === 2 ? 'EMAIL' : 'WA', Tujuan: i % 3 === 2 ? c.Email : hp62(c.No_WA), NamaPenerima: c.Nama, Subjek: i % 3 === 2 ? 'Invoice ' + inv.No_Invoice : '', Pesan: 'Halo ' + c.Nama + ', invoice ' + inv.No_Invoice + ' sebesar ' + rp(inv.Nominal) + ' sudah terbit.', Lampiran: '', Event: 'INVOICE_TERBIT', RefID: inv.No_Invoice, BlastID: '', Status: i === 5 ? 'Gagal' : 'Terkirim', Percobaan: i === 5 ? 3 : 1, Respon: i === 5 ? 'device disconnected' : 'OK (simulasi)', DibuatPada: inv.Dibuat, DikirimPada: i === 5 ? '' : inv.Dibuat });
+    // Pembayaran & tagihan
+    A['bayar.simpan'](txF, { ID_Pesanan: IND.ID_Pesanan, Tanggal: '2026-09-01', Nominal: 65000000, Jenis: 'Pelunasan', Metode: 'Transfer Mandiri', kabari: false });
+    A['bayar.simpan'](txF, { ID_Pesanan: ANG.ID_Pesanan, Tanggal: '2026-09-04', Nominal: 25000000, Jenis: 'Pelunasan', Metode: 'Transfer BCA', kabari: false });
+    [MUT, ULF, IRH, MAH, JUL, AND, SIS, DIN, AFN, DEV, BUN].forEach(function (p) { var s = num(p.Pax) * num(p.Harga) - num(p.DP); if (s > 0) A['bayar.simpan'](txF, { ID_Pesanan: p.ID_Pesanan, Tanggal: tambahHari(p.Tgl_Mulai, -1), Nominal: s, Jenis: 'Pelunasan', Metode: 'Transfer', kabari: false }); });
+    tambahan.forEach(function (p) {
+      var s = num(p.Pax) * num(p.Harga) - num(p.DP), h = selisihHari(today, p.Tgl_Mulai); if (s <= 0) return;
+      if (h < -2 && acak() < 0.93) A['bayar.simpan'](txF, { ID_Pesanan: p.ID_Pesanan, Tanggal: tambahHari(p.Tgl_Mulai, -antara(1, 5)), Nominal: s, Jenis: 'Pelunasan', Metode: pilih(['Transfer Mandiri', 'Transfer BCA']), kabari: false });
+      else if (h >= 0 && h < 12 && acak() < 0.3) A['bayar.simpan'](txF, { ID_Pesanan: p.ID_Pesanan, Tanggal: hari(-antara(0, 3)), Nominal: s, Jenis: 'Pelunasan', Metode: 'Transfer BCA', kabari: false });
+    });
+
+    // Invoice (model klien)
+    function buatInvoice(p, terbit) { var s = saranInvoice(tx.D, p.ID_Pesanan, tx.S(), p.Tgl_Pesan > today ? today : p.Tgl_Pesan); var r = A['invoice.simpan'](txA, s); if (terbit) A['invoice.catatTerbit'](txA, { ID_Invoice: r.data.ID_Invoice, url: '', fileId: 'demo' }); return r.data; }
+    buatInvoice(IND, true); buatInvoice(ANG, true); buatInvoice(KIS, true);
+    tambahan.filter(function (p) { return selisihHari(today, p.Tgl_Mulai) > -10 && /Private/.test(p.Tab); }).slice(0, 5).forEach(function (p, i) { buatInvoice(p, i < 3); });
+
+    // Biaya operasional (Finance)
+    for (var b = -4; b <= 0; b++) {
+      var ym = geserBulan(today.slice(0, 7), b);
+      [['Gaji & Honor', 'Gaji staf kantor (4 orang)', 18500000], ['Sewa Kantor', 'Sewa kantor Jl. Trenggono', 3500000], ['Listrik, Air & Internet', 'Listrik, air & internet kantor', 1250000 + antara(0, 300000)], ['Marketing & Iklan', 'Iklan Instagram & TikTok', 3000000 + antara(0, 3) * 500000], ['Transport Kantor', 'BBM operasional kantor', 600000 + antara(0, 400000)]].forEach(function (x) {
+        if (b === 0 && x[0] !== 'Sewa Kantor' && x[0] !== 'Marketing & Iklan') return;
+        A['biaya.simpan'](txF, { Bulan: ym, Tanggal: ym + '-0' + antara(1, 9), Kategori: x[0], Uraian: x[1], Nominal: x[2] });
       });
-      tx.insert('BlastWA', { Judul: 'Promo Early Bird Karimunjawa', Pesan: 'Halo {nama}! Early bird Karimunjawa 3D2N mulai Rp 2,45 jt. Kuota terbatas 🌴', Sasaran: 'Segmen Repeat', Total: 6, Terkirim: 6, Gagal: 0, UkuranBatch: 10, JedaDetik: '5', Status: 'Selesai', DibuatOleh: STAF.raka, Tanggal: wkt(-9), SelesaiPada: wkt(-9) });
-      [['INVOICE', 'Invoice (A4)'], ['KUITANSI', 'Kuitansi Pembayaran'], ['MANIFEST_CUSTOMER', 'Manifest per Customer'], ['MANIFEST_TRIP', 'Manifest per Trip']].forEach(function (t) {
-        tx.insert('Template_Dokumen', { Kode: t[0], Nama: t[1], Engine: 'docs', File_ID: 'demo-' + t[0].toLowerCase(), Bidang: JSON.stringify(BIDANG_TEMPLATE[t[0]] || []), Versi: 1, Aktif: 'YA', Diperbarui: wkt(-40) });
-      });
     }
-    return tx.hasil(ok({ trip: Object.keys(trip).length, customer: cust.length, penjualan: pjRows.length, invoice: tx.all('Invoice').length }, 'Data demo dimuat.'));
+
+    // Status sinkron kalender (simulasi): trip mendatang sudah punya event
+    tx.all('Pesanan').forEach(function (p) {
+      var ev = eventPesanan(tx.D, indeks(tx.D), p, tx.S()); if (!ev) return; var h = selisihHari(today, p.Tgl_Mulai);
+      if (h < -60) return;
+      tx.insert('Kalender_Event', { ID_Pesanan: p.ID_Pesanan, Event_ID: 'yb' + hashTeks(p.ID_Pesanan) + 'demo', Hash: ev.hash, Lampiran: ev.lampiran ? ev.lampiran.fileId : '', Tamu: JSON.stringify(ev.tamu), Status: 'OK', Pesan: 'Tersinkron (simulasi)', Diperbarui: wkt(-1) });
+    });
+    A['crm.sync'](txA, {});
+    // log & antrean demo dibersihkan agar riwayat terasa natural
+    tx.where('AntrianNotif', function () { return true; }).forEach(function (r) { tx.update('AntrianNotif', r.AntrianID, { Status: 'Terkirim', Respon: 'OK (simulasi)', DikirimPada: r.DibuatPada }); });
+    tx.where('Antrean_Tugas', function () { return true; }).forEach(function (r) { tx.update('Antrean_Tugas', r.ID_Tugas, { Status: 'Selesai', Hasil: 'OK (simulasi demo)', Selesai: r.Dibuat }); });
+    return tx.hasil(ok({ pesanan: tx.all('Pesanan').length }, 'Data demo dimuat.'));
   }
-
-  // Placeholder bawaan tiap template (hasil pindai template default)
-  var BIDANG_TEMPLATE = {
-    INVOICE: ['APP_NAMA', 'PT_NAMA', 'PT_ALAMAT', 'PT_EMAIL', 'PT_TELP', 'NO_INVOICE', 'JENIS', 'STATUS', 'TGL_TERBIT', 'JATUH_TEMPO', 'NAMA_CUSTOMER', 'EMAIL_CUSTOMER', 'WA_CUSTOMER', 'NAMA_TRIP', 'JADWAL', 'PAX', 'MEETING_POINT', '#ITEM', 'ITEM.NO', 'ITEM.DESKRIPSI', 'ITEM.KETERANGAN', 'ITEM.QTY', 'ITEM.JUMLAH', 'SUBTOTAL', 'DISKON', 'TOTAL', 'NOMINAL', 'TERBILANG', 'SISA_SETELAH', 'BANK', 'NOREK', 'ATAS_NAMA', 'CATATAN', 'TTD', 'TTD_NAMA', 'TTD_JABATAN', 'QR', 'KODE_VERIFIKASI'],
-    KUITANSI: ['APP_NAMA', 'PT_NAMA', 'NAMA_CUSTOMER', 'NOMINAL', 'TERBILANG', 'NAMA_TRIP', 'NO_INVOICE', 'TERBAYAR', 'SISA_TAGIHAN', 'TTD', 'TTD_NAMA', 'QR'],
-    MANIFEST_CUSTOMER: ['JUDUL', 'NAMA_TRIP', 'JADWAL', 'MEETING_POINT', 'AKOMODASI', 'NAMA_CUSTOMER', 'KONTAK_DARURAT', 'TOTAL_PAX', '#PESERTA', 'PESERTA.NO', 'PESERTA.NAMA', 'PESERTA.IDENTITAS', 'PESERTA.GENDER', 'PESERTA.HP', 'PESERTA.KAMAR', 'PESERTA.CATATAN', 'TGL_CETAK'],
-    MANIFEST_TRIP: ['JUDUL', 'NAMA_TRIP', 'JADWAL', 'MEETING_POINT', 'AKOMODASI', 'TOTAL_PAX', 'JUMLAH_BOOKING', '#PESERTA', 'PESERTA.NO', 'PESERTA.NAMA', 'PESERTA.BOOKING', 'PESERTA.IDENTITAS', 'PESERTA.HP', 'PESERTA.KAMAR', 'PESERTA.BAJU', 'PESERTA.CATATAN', 'TGL_CETAK']
-  };
 
   // ==========================================================================
   // 12. EKSPOR API PUBLIK
   // ==========================================================================
   return {
-    VERSI: VERSI, SKEMA: SKEMA, ANGKA: ANGKA, TEKS_WAJIB: TEKS_WAJIB, PERAN: PERAN, ROUTES: ROUTES, NOTIF_EVENTS: NOTIF_EVENTS, PRESET_PALET: PRESET_PALET,
-    PENGATURAN_DEFAULT: PENGATURAN_DEFAULT, PENGATURAN_BOLEH: PENGATURAN_BOLEH, KATEGORI_DEFAULT: KATEGORI_DEFAULT, BIDANG_TEMPLATE: BIDANG_TEMPLATE,
-    Tx: Tx, jalankan: jalankan, dataBoot: dataBoot, isiDemo: isiDemo, ok: ok, fail: fail,
+    VERSI: VERSI, SKEMA: SKEMA, TABEL_VIRTUAL: TABEL_VIRTUAL, TABEL_APP: TABEL_APP, ANGKA: ANGKA, TEKS_WAJIB: TEKS_WAJIB, PERAN: PERAN, ROUTES: ROUTES, NOTIF_EVENTS: NOTIF_EVENTS, PRESET_PALET: PRESET_PALET,
+    PENGATURAN_DEFAULT: PENGATURAN_DEFAULT, PENGATURAN_BOLEH: PENGATURAN_BOLEH, MENU_DIATUR: MENU_DIATUR, GRUP_TL: GRUP_TL, REKAP_KOLOM: REKAP_KOLOM, REKAP_LABEL_DEFAULT: REKAP_LABEL_DEFAULT,
+    JENIS_TAMBAHAN: JENIS_TAMBAHAN, BIAYA_OPS_KATEGORI: BIAYA_OPS_KATEGORI, SINONIM: SINONIM, LABEL_ID: LABEL_ID, LABEL_TGL_PESAN: LABEL_TGL_PESAN, BUTUH_SUMBER: BUTUH_SUMBER,
+    Tx: Tx, jalankan: jalankan, dataBoot: dataBoot, isiDemo: isiDemo, ok: ok, fail: fail, aksesMenu: aksesMenu,
     klaimTugas: klaimTugas, selesaikanTugas: selesaikanTugas, tugasTertunda: tugasTertunda, klaimNotif: klaimNotif, selesaikanNotif: selesaikanNotif, adaAntrian: adaAntrian, pengingatHarian: pengingatHarian,
-    matriksNotif: matriksNotif, recalcRekap: recalcRekap, recalcPenjualan: recalcPenjualan,
-    bantu: { pastikanPeserta: pastikanPeserta, pastikanManifest: pastikanManifest, pastikanAnggotaUtama: pastikanAnggotaUtama, nomorInvoiceBaru: nomorInvoiceBaru, kodeVerif: kodeVerif, crmUpsertSatu: crmUpsertSatu },
-    RLS: RLS, hitung: { indeks: indeks, ringkasPj: ringkasPj, rekapTrip: rekapTrip, rabVsRealisasi: rabVsRealisasi, normRls: normRls, rekapSemua: rekapSemua, labaRugi: labaRugi, dashboard: dashboard, statusTrip: statusTrip, budgetAktif: budgetAktif, budgetTerbaru: budgetTerbaru, terbayarPj: terbayarPj, biayaPerKategori: biayaPerKategori, rentangPeriode: rentangPeriode, deskripsiEvent: deskripsiEvent, dataInvoice: dataInvoice, dataManifest: dataManifest, verifikasiPublik: verifikasiPublik, prosesInvoice: prosesInvoice },
-    util: { str: str, num: num, pad: pad, tgl: tgl, tambahHari: tambahHari, selisihHari: selisihHari, tglId: tglId, tglPanjang: tglPanjang, rentangTgl: rentangTgl, rp: rp, rpRingkas: rpRingkas, terbilang: terbilang, hp08: hp08, hp62: hp62, hpValid: hpValid, emailValid: emailValid, isiTemplate: isiTemplate, inisial: inisial, samarkanNama: samarkanNama, urutkan: urutkan, jumlah: jumlah, kelompok: kelompok, peta: peta, nowIso: nowIso, hariIni: hariIni, kontras: kontras, cekPalet: cekPalet, paletAktif: paletAktif, parseJson: parseJson, BULAN: BULAN, BLN: BLN, ROMAWI: ROMAWI }
+    matriksNotif: matriksNotif, susunKolom: susunKolom, normalHeader: normalHeader, kunciKanonik: kunciKanonik,
+    hitung: { indeks: indeks, infoTab: infoTab, infoPesanan: infoPesanan, statusTrip: statusTrip, durasi: durasi, ringkasKalkulasi: ringkasKalkulasi, saranItem: saranItem, tebakKolom: tebakKolom, tebakGrup: tebakGrup, kolomValid: kolomValid,
+      labelRekap: labelRekap, rekapPesanan: rekapPesanan, rekapDaftar: rekapDaftar, totalRekap: totalRekap, rentangPeriode: rentangPeriode, geserBulan: geserBulan, labaRugi: labaRugi,
+      tagihanPesanan: tagihanPesanan, tagihanDaftar: tagihanDaftar, dataInvoice: dataInvoice, saranInvoice: saranInvoice, hitungInvoice: hitungInvoice, rekeningDari: rekeningDari, syaratDari: syaratDari,
+      dataManifest: dataManifest, parseItinerary: parseItinerary, checklistDefault: checklistDefault, eventPesanan: eventPesanan, report: report, dashboard: dashboard, verifikasiPublik: verifikasiPublik, dataRekapSheet: dataRekapSheet, kotaNormal: kotaNormal, tataRekap: tataRekap },
+    util: { str: str, num: num, pad: pad, tgl: tgl, tglValid: tglValid, tambahHari: tambahHari, selisihHari: selisihHari, tglId: tglId, tglPanjang: tglPanjang, tglDuaDigit: tglDuaDigit, tglSlash: tglSlash, rentangTgl: rentangTgl, labelBulan: labelBulan,
+      rp: rp, ribuan: ribuan, rpRingkas: rpRingkas, terbilang: terbilang, hp08: hp08, hp62: hp62, hpValid: hpValid, emailValid: emailValid, isiTemplate: isiTemplate, inisial: inisial, samarkanNama: samarkanNama, judulKata: judulKata,
+      urutkan: urutkan, jumlah: jumlah, kelompok: kelompok, peta: peta, nowIso: nowIso, hariIni: hariIni, kontras: kontras, cekPalet: cekPalet, paletAktif: paletAktif, parseJson: parseJson, hashTeks: hashTeks,
+      BULAN: BULAN, BLN: BLN, ROMAWI: ROMAWI }
   };
 })();

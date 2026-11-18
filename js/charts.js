@@ -1,5 +1,5 @@
 /* =====================================================================
-   YukX — charts.js : grafik SVG ringan (tanpa pustaka) bergaya bento:
+   YukBanyuwangi — charts.js : grafik SVG ringan (tanpa pustaka) bergaya bento:
    batang kapsul (aktif solid, lainnya bermotif diagonal), gauge setengah
    lingkaran, batang per trip + titik laba, dan area tren bulanan.
    ===================================================================== */

@@ -3,16 +3,16 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <meta name="theme-color" content="#1E6FEB">
+  <meta name="theme-color" content="#0076A8">
   <meta name="robots" content="noindex">
-  <meta name="description" content="Cek keaslian invoice & kuitansi YukX dengan memindai QR atau memasukkan kode verifikasi.">
-  <title>Verifikasi Dokumen — YukX</title>
+  <meta name="description" content="Cek keaslian invoice YukBanyuwangi dengan memindai QR atau memasukkan kode verifikasi.">
+  <title>Verifikasi Invoice — YukBanyuwangi</title>
   <link rel="icon" id="favicon" href="assets/favicon.png">
   <script>
     (function () {
       try {
-        var t = JSON.parse(localStorage.getItem('yukx:tema') || 'null'), r = document.documentElement;
-        var g = localStorage.getItem('yukx:gelap');                       // belum memilih → ikuti tema perangkat
+        var t = JSON.parse(localStorage.getItem('yb:tema') || 'null'), r = document.documentElement;
+        var g = localStorage.getItem('yb:gelap');                       // belum memilih → ikuti tema perangkat
         if (g === null ? (!r.getAttribute('data-theme') && matchMedia('(prefers-color-scheme: dark)').matches) || r.getAttribute('data-theme') === 'dark' : JSON.parse(g)) r.setAttribute('data-theme', 'dark'); else r.setAttribute('data-theme', 'light');
         if (t && t.vars) {
           var gelap = r.getAttribute('data-theme') === 'dark';
@@ -25,7 +25,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap">
-  <link rel="stylesheet" href="css/style.css?v=1.1.0">
+  <link rel="stylesheet" href="css/style.css">
   <style>
     body { background: var(--c-bg); min-height: 100dvh; display: grid; place-items: center; padding: 24px 16px; }
     .vf { width: min(100%, 520px); display: flex; flex-direction: column; gap: 16px; }
@@ -49,7 +49,7 @@
 </head>
 <body>
   <main class="vf enter">
-    <div class="vf__brand"><img id="vf-logo" src="assets/favicon.png" alt="" width="44" height="44"><b id="vf-nama">YukX</b></div>
+    <div class="vf__brand"><img id="vf-logo" src="assets/favicon.png" alt="" width="44" height="44"><b id="vf-nama">YukBanyuwangi</b></div>
     <section class="card stack" style="gap:16px" aria-live="polite">
       <div class="vf__status" id="vf-status">
         <div class="vf__ring wait"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg></div>
@@ -63,11 +63,11 @@
         <input class="input" id="vf-kode" name="k" placeholder="Kode di bawah QR" maxlength="24" aria-label="Kode verifikasi">
         <button class="btn btn--primary" type="submit">Cek</button>
       </form>
-      <small class="muted">Kode tercetak di bawah QR pada invoice/kuitansi. Data pribadi pelanggan disamarkan.</small>
+      <small class="muted">Kode tercetak di bawah QR pada invoice. Data pribadi pelanggan disamarkan.</small>
     </section>
     <small class="muted" style="text-align:center" id="vf-kaki">Halaman verifikasi resmi</small>
   </main>
-  <script src="js/config.js?v=1.1.0"></script>
+  <script src="js/config.js"></script>
   <script>
     (function () {
       'use strict';
@@ -103,12 +103,12 @@
         elS.innerHTML = '<div class="vf__ring wait"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg></div><h1 style="font-size:20px;margin:0">Memeriksa dokumen…</h1>'; elD.innerHTML = '';
         try {
           if (DEMO) {
-            if (!window.YX) await muatScript('js/engine.js?v=1.1.0');
-            var db = JSON.parse(localStorage.getItem('yukx:demo:db') || 'null');
+            if (!window.YX) await muatScript('js/engine.js');
+            var db = JSON.parse(localStorage.getItem('yb:demo:db') || 'null');
             if (!db || !db.D) { tampil({ success: false, message: 'Mode Demo: buka aplikasi di perangkat ini terlebih dahulu agar data contoh tersedia.' }); return; }
             var r = YX.hitung.verifikasiPublik(db.D, kode), S = {};
             (db.D.Pengaturan || []).forEach(function (x) { S[x.Kunci] = x.Nilai; });
-            if (r.data) { r.data.app = S.APP_NAMA || 'YukX'; r.data.pt = S.PT_NAMA; r.data.logo = S.LOGO_URL; }
+            if (r.data) { r.data.app = S.APP_NAMA || 'YukBanyuwangi'; r.data.pt = S.PT_NAMA; r.data.logo = S.LOGO_URL; }
             await new Promise(function (ok) { setTimeout(ok, 400); });
             tampil(r);
           } else {

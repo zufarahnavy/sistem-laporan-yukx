@@ -1,13 +1,9 @@
-# Otomatisasi Sistem Laporan YukX — Frontend v1.1.0
+# YukBanyuwangi — Trip Operation & Report (v2.0.0)
 
-Aplikasi web statis (HTML/CSS/JS tanpa framework) untuk GitHub Pages. Backend: Google Apps Script (berkas `.gs` terpisah, tidak ada di repo ini).
+Frontend statis (HTML/CSS/JS) untuk GitHub Pages. Backend: Google Apps Script (berkas `.gs` diberikan terpisah).
 
-- **Mode Demo** aktif selama `js/config.js` belum diisi — data contoh tersimpan di browser. Akun demo: `raka@yukx.id` (Admin) · `sinta@yukx.id` (Finance), PIN `123456`.
-- **Mode Live**: isi `GAS_URL` di `js/config.js` dengan URL Web App `/exec`.
-- Panduan lengkap: **PANDUAN-INSTALASI.md**.
+- Isi `js/config.js` dengan URL Web App Apps Script (`.../exec`). Selama belum diisi, aplikasi berjalan dalam **Mode Demo**.
+- Akun demo (PIN 123456): `admin@yukbanyuwangi.demo` · `finance@yukbanyuwangi.demo`.
+- Panduan lengkap: `PANDUAN-INSTALASI-v2.0.0.md` (diberikan terpisah).
 
-Alur anggaran: Admin menyusun RAB → Finance menyetujui (RAB terkunci) → Admin mencatat realisasi & melaporkan setelah trip → Finance mengaudit → angka Final masuk Laba Rugi. Realisasi di atas RAB ditandai **Melebihi RAB**.
-
-Struktur: `index.html` (aplikasi), `verifikasi.html` (cek keaslian dokumen lewat QR), `css/`, `js/` (`engine.js` = mesin logika yang sama dengan backend, `realisasi.js` = panel realisasi anggaran, `dokumen.js` = cetak & PDF A4), `js/pages/` (termasuk `kalender.js` — embed Google Calendar + kalender bulanan), `assets/`.
-
-Ikon: Lucide (ISC). QR: qrcode-generator (MIT). Ekspor Excel/PDF memuat SheetJS & jsPDF + jsPDF-AutoTable dari cdnjs saat dibutuhkan.
+Tidak ada token, kunci, atau ID file di folder ini — semuanya disimpan di Script Properties backend.

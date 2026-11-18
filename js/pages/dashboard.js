@@ -1,104 +1,56 @@
-/* YukX — Halaman Dashboard Operasional & Finansial */
+/* =====================================================================
+   YukBanyuwangi — Dashboard
+   Ringkasan bulan ini, daftar "perlu tindakan" sesuai peran (Admin:
+   kalkulasi/manifest/rekap · Finance: kunci margin/tagihan), trip berjalan
+   & mendatang, dan tren penjualan vs pengeluaran 6 bulan.
+   ===================================================================== */
 (function () {
   'use strict';
   var C = window.Core, Store = C.Store, esc = C.esc, ic = C.ic, F = C.F, U = C.U, HT = C.HT;
-  var st = { periode: 'bulan', trip: '' }, timer = null;
+  var IKON = { kalkulasi: 'calculator', manifest: 'clipboard-list', rekap: 'chart-column', kunci: 'lock', tagihan: 'hand-coins' };
 
-  function calChip(inv) { var p = HT.prosesInvoice(inv), s = p.cal; if (s === 'ok') return '<span class="badge ok">' + ic('calendar-check', 14) + 'Tersinkron</span>'; if (s === 'gagal') return '<span class="badge danger">' + ic('circle-x', 14) + 'Gagal</span>'; if (s === 'antri' || s === 'proses') return '<span class="badge warn">' + ic('loader-circle', 14, 'spin') + 'Proses</span>'; return '<span class="badge neutral">' + ic('calendar', 14) + 'Belum</span>'; }
+  function sapa() { var j = new Date(Date.now() + 7 * 3600e3).getUTCHours(); return j < 11 ? 'Selamat pagi' : j < 15 ? 'Selamat siang' : j < 18 ? 'Selamat sore' : 'Selamat malam'; }
+  function persen(x) { return (Math.round(x * 1000) / 10).toString().replace('.', ',') + '%'; }
+  function banding(a, b) { if (!b) return ''; var p = Math.round((a - b) / b * 100); return '<span class="delta">' + ic(p >= 0 ? 'arrow-up-right' : 'arrow-down-right', 14) + (p > 0 ? '+' : '') + p + '% vs bulan lalu</span>'; }
 
-  function hitungMundur() {
-    clearInterval(timer);
-    var box = document.getElementById('cd'); if (!box) return;
-    var target = new Date(box.dataset.tgl + 'T06:00:00+07:00').getTime();
-    function tick() {
-      if (!box.isConnected) { clearInterval(timer); return; }
-      var d = Math.max(0, target - Date.now()), h = Math.floor(d / 864e5), j = Math.floor(d % 864e5 / 36e5), m = Math.floor(d % 36e5 / 6e4), s = Math.floor(d % 6e4 / 1e3);
-      var a = h > 0 ? [h, j, m] : [j, m, s], l = h > 0 ? ['HARI', 'JAM', 'MENIT'] : ['JAM', 'MENIT', 'DETIK'];
-      box.innerHTML = a.map(function (v, i) { return '<div><b>' + String(v).padStart(2, '0') + '</b><small>' + l[i] + '</small></div>' + (i < 2 ? '<span class="sep">:</span>' : ''); }).join('');
-    }
-    tick(); timer = setInterval(tick, 1000);
-  }
-
-  function aksiAntrean(a) {
-    var r = a.r, admin = Store.isAdmin();
-    if (a.jenis === 'review') return admin ? '<button class="btn btn--primary btn--sm" data-act="review" data-id="' + r.id + '">' + ic('user-check', 16) + 'Verifikasi & Sync</button>' : '';
-    if (a.jenis === 'peserta') return admin ? '<button class="btn btn--primary btn--sm" data-go="invoice/baru?pj=' + r.id + '">' + ic('receipt', 16) + 'Buat invoice</button>' : '';
-    if (a.jenis === 'telat') return '<a class="btn btn--soft btn--sm" target="_blank" rel="noopener" href="https://wa.me/' + U.hp62(r.cust.No_WA) + '?text=' + encodeURIComponent('Halo ' + r.cust.Nama + ', pengingat ramah: tagihan ' + r.trip.Nama + ' sebesar ' + U.rp(r.sisa) + ' sudah jatuh tempo. Terima kasih 🙏') + '">' + ic('message-circle', 16) + 'Tagih via WA</a>';
-    if (a.jenis === 'manifest') return '<button class="btn btn--soft btn--sm" data-go="manifest/' + r.trip.ID_Trip + '">' + ic('clipboard-list', 16) + 'Buka manifest</button>';
-    return '';
-  }
-
-  var H = {
-    judul: 'Dashboard',
+  var H = window.Halaman.dashboard = {
     render: function (el) {
-      var admin = Store.isAdmin();
-      el.innerHTML = Hal.kepala({ crumbs: ['Operasional & Finansial', 'Ringkasan'], judul: 'Dashboard Operasional & Finansial', sub: 'Ringkasan performa trip, arus kas invoice, dan otomasi manifest ' + esc(Store.S.APP_NAMA) + ' dalam satu pandangan.',
-        aksi: '<select class="select" id="db-per" style="width:auto"><option value="bulan">Bulan ini</option><option value="bulan-lalu">Bulan lalu</option><option value="kuartal">Kuartal ini</option><option value="tahun">Tahun ini</option><option value="semua">Semua waktu</option></select>' +
-          Hal.pilihTrip('db-trip', st.trip, 'Semua trip') + '<span class="status-pill hide-sm">' + ic('calendar-check', 18, 'primary') + 'Google Calendar <span class="dot ' + (C.DEMO ? '' : 'pulse') + '"></span></span>' +
-          (admin ? '<a class="btn btn--primary hide-sm" href="#/invoice/baru">' + ic('plus', 18) + 'Buat Invoice</a>' : '') }) +
-        (admin ? '<div class="only-sm" style="margin:-8px 0 16px"><div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px"><a class="btn btn--primary btn--sm" href="#/invoice/baru">' + ic('circle-plus', 16) + 'Invoice</a><a class="btn btn--ghost btn--sm" href="#/penjualan?baru=1">' + ic('wallet', 16) + 'Transaksi</a><a class="btn btn--ghost btn--sm" href="#/manifest">' + ic('clipboard-list', 16) + 'Manifest</a></div></div>' : '') +
-        '<div id="db-body" class="stack" style="gap:16px"></div>';
-      el.querySelector('#db-per').value = st.periode;
-      el.querySelector('#db-per').onchange = function (e) { st.periode = e.target.value; H.isi(el, true); };
-      el.querySelector('#db-trip').onchange = function (e) { st.trip = e.target.value; H.isi(el, true); };
-      Hal.aksiPeta(el, {
-        review: function (d, b) { C.aksi('penjualan.review', { id: d.id, nilai: true }, { btn: b }); },
-        mutasi: function (d) { App.go('penjualan?pj=' + d.id); }
-      });
-      H.isi(el, true);
+      var D = Store.D, S = Store.S, today = U.hariIni(), db = HT.dashboard(D, { today: today, S: S }), me = Store.me, fin = Store.isFin(), adm = Store.isAdmin();
+      var aksi = db.aksi.filter(function (a) { return a.peran === me.peran; }), lb = U.labelBulan(db.bulan);
+      var kpi = fin ? [
+        UI.stat({ label: 'Sisa tagihan aktif', nilai: UI.hitung(db.sisaTagihan, 'rp'), hero: true, go: 'tagihan', kaki: '<span>' + db.belumLunas + ' pesanan belum lunas' + (db.telat ? ' · ' + db.telat + ' lewat jatuh tempo' : '') + '</span>' }),
+        UI.stat({ label: 'Rekap siap dicek', nilai: UI.hitung(db.siapDicek), ikon: 'lock', tone: db.siapDicek ? 'warn' : 'ok', go: 'rekap', kaki: '<span>menunggu kunci margin</span>' }),
+        UI.stat({ label: 'Margin terkunci · ' + lb, nilai: UI.hitung(db.marginBulan.terkunci ? HT.totalRekap(HT.rekapDaftar(D, Object.assign({ S: S, today: today }, HT.rentangPeriode(db.bulan, today))).filter(function (r) { return r.kunci; })).laba : 0, 'rpS'), ikon: 'chart-column', kaki: '<span>' + db.terkunciBulan + ' dari ' + db.marginBulan.n + ' trip dikunci</span>' }),
+        UI.stat({ label: 'Penjualan · ' + lb, nilai: UI.hitung(db.penjualan, 'rpS'), ikon: 'trending-up', kaki: banding(db.penjualan, db.penjualanLalu) })
+      ] : [
+        UI.stat({ label: 'Penjualan · ' + lb, nilai: UI.hitung(db.penjualan, 'rp'), hero: true, go: 'rekap', kaki: '<span>' + db.pesanan + ' pesanan · ' + db.pax + ' pax</span>' + banding(db.penjualan, db.penjualanLalu) }),
+        UI.stat({ label: 'Pax bulan ini', nilai: UI.hitung(db.pax), ikon: 'users', go: Store.boleh('report') ? 'report' : 'pesanan', kaki: banding(db.pax, db.paxLalu) || '<span>' + db.pesanan + ' pesanan</span>' }),
+        UI.stat({ label: 'Pesanan masuk 30 hari', nilai: UI.hitung(db.pesananBaru), ikon: 'inbox', go: 'pesanan', kaki: '<span>dari kolom TANGGAL PESAN</span>' }),
+        UI.stat({ label: 'Estimasi margin · ' + lb, nilai: UI.hitung(db.marginBulan.laba, 'rpS'), ikon: 'chart-column', tone: db.marginBulan.laba < 0 ? 'danger' : 'ok', go: 'rekap', kaki: '<span>' + persen(db.marginBulan.margin) + ' · ' + db.terkunciBulan + '/' + db.marginBulan.n + ' terkunci</span>' })
+      ];
+      el.innerHTML = '<div class="sapa"><div><h1>' + sapa() + ', ' + esc(String(me.nama).split(' ')[0]) + '</h1><p class="muted">' + esc(U.tglPanjang(today)) + ' · ' + (db.berjalan.length ? db.berjalan.length + ' trip sedang berjalan' : 'tidak ada trip berjalan hari ini') + '</p></div>' +
+        (adm ? '<div class="toolbar"><a class="btn btn--ghost" href="#/pesanan">' + ic('table-2', 18) + '<span>Data pemesanan</span></a><a class="btn btn--primary" href="#/pesanan?baru=1">' + ic('plus', 18) + '<span>Tambah pesanan</span></a></div>' : '<div class="toolbar"><a class="btn btn--ghost" href="#/labarugi">' + ic('trending-up', 18) + '<span>Laba rugi</span></a><a class="btn btn--primary" href="#/tagihan">' + ic('hand-coins', 18) + '<span>Tagihan</span></a></div>') + '</div>' +
+        (Store.info.sumberOk === false && !C.DEMO ? '<div class="note danger" style="margin-bottom:16px">' + ic('circle-alert') + '<span><b>Database Pemesanan tidak bisa dibaca.</b> ' + esc(Store.info.sumberPesan || '') + (adm ? ' <a href="#/pengaturan/sumber">Periksa Sumber Data</a>' : '') + '</span></div>' : '') +
+        '<div class="bento two-sm" style="margin-bottom:16px">' + kpi.join('') + '</div>' +
+        '<div class="grid-12" style="align-items:start">' +
+        '<section class="card span-5 span-lg-12"><div class="card__head"><div class="card__title"><h2>Perlu tindakan</h2><p>' + (fin ? 'Kunci margin & tagihan jatuh tempo' : 'Kalkulasi, manifest & rekap yang menunggu') + '</p></div><span class="badge ' + (aksi.length ? 'warn' : 'ok') + '">' + aksi.length + '</span></div>' +
+        (aksi.length ? '<div class="stack" style="gap:4px">' + aksi.slice(0, 8).map(function (a) {
+          var nama = a.i.p ? a.i.p.Nama : a.r ? a.r.p.Nama : a.t ? a.t.p.Nama : '';
+          return '<a class="tindakan" href="#/' + esc(a.go) + '"><span class="ic-box ' + (a.jenis === 'tagihan' && a.h < 0 ? 'danger' : 'warn') + '">' + ic(IKON[a.jenis] || 'circle-alert', 19) + '</span><span class="row__text"><b class="truncate">' + esc(nama) + '</b><small class="muted truncate">' + esc(a.label) + '</small></span><span class="tindakan__h">' + (a.jenis === 'tagihan' ? (a.h < 0 ? 'lewat ' + (-a.h) + 'h' : 'H-' + a.h) : a.jenis === 'rekap' ? 'selesai' : a.jenis === 'kunci' ? '' : a.h === 0 ? 'hari ini' : 'H-' + a.h) + '</span></a>';
+        }).join('') + (aksi.length > 8 ? '<button class="btn btn--plain btn--sm" data-act="semuaAksi">' + ic('chevrons-down', 16) + 'Lihat ' + (aksi.length - 8) + ' lainnya</button>' : '') + '</div>' : UI.kosong('circle-check', 'Semua beres', fin ? 'Tidak ada rekap yang menunggu & tagihan aman.' : 'Kalkulasi & manifest trip dekat sudah siap.')) + '</section>' +
+        '<section class="card span-7 span-lg-12"><div class="card__head"><div class="card__title"><h2>Trip berjalan & mendatang</h2><p>Urut tanggal trip · alur: kalkulasi · manifest · rekap</p></div><a class="btn btn--plain btn--sm" href="#/kalender">' + ic('calendar-days', 16) + 'Kalender</a></div>' +
+        (db.mendatang.length ? '<div class="stack" style="gap:2px">' + db.mendatang.map(function (i) {
+          var ix = HT.indeks(D), k = ix.kal[i.id], m = ix.mnf[i.id], h = U.selisihHari(today, i.mulai);
+          return '<a class="trip-baris" href="#/' + (adm ? 'manifest/' : 'pesanan/') + i.id + '"><span class="psn-baris__tgl"><b>' + Number(i.mulai.slice(8, 10)) + '</b><small>' + U.BLN[+i.mulai.slice(5, 7) - 1] + '</small></span><span class="row__text"><b class="truncate">' + esc(i.p.Nama) + '</b><small class="muted truncate">' + esc(i.p.Trip) + ' · ' + i.pax + ' pax</small></span>' +
+            '<span class="alur-mini" title="Kalkulasi · Manifest"><i class="' + (k ? 'ok' : '') + '"></i><i class="' + (m && m.Status === 'Terbit' ? 'ok' : m && m.Status === 'Berubah' ? 'bad' : m ? 'half' : '') + '"></i></span>' + (i.status === 'Berjalan' ? UI.badge('Berjalan', 'solid', 'activity') : '<span class="tindakan__h">' + (h === 0 ? 'hari ini' : 'H-' + h) + '</span>') + '</a>';
+        }).join('') + '</div>' : UI.kosong('calendar', 'Belum ada trip mendatang', adm ? 'Tambahkan pesanan atau isi Database Pemesanan.' : '')) + '</section>' +
+        '<section class="card span-8 span-lg-12"><div class="card__head"><div class="card__title"><h2>Penjualan vs pengeluaran</h2><p>6 bulan terakhir · draft & terkunci</p></div><a class="btn btn--plain btn--sm" href="#/rekap">' + ic('chart-column', 16) + 'Rekap</a></div>' +
+        Grafik.kapsul(db.tren, { la: 'Penjualan', lb: 'Pengeluaran', aria: 'Penjualan dan pengeluaran 6 bulan' }) + '<div class="legend" style="margin-top:8px"><span><i style="background:var(--c-primary)"></i>Penjualan</span><span><i class="hatch" style="background-color:var(--c-primary-tint)"></i>Pengeluaran</span></div></section>' +
+        '<section class="card span-4 span-lg-12"><div class="card__head"><div class="card__title"><h2>' + (db.rugi.length ? 'Trip rugi (90 hari)' : 'Kesehatan margin') + '</h2><p>' + (db.rugi.length ? 'Pengeluaran melebihi penjualan' : 'Tidak ada trip rugi 90 hari terakhir') + '</p></div></div>' +
+        (db.rugi.length ? db.rugi.slice(0, 5).map(function (r) { return '<a class="tindakan" href="#/rekap?bulan=' + r.inf.bulan + '&id=' + r.id + '"><span class="ic-box danger">' + ic('trending-down', 19) + '</span><span class="row__text"><b class="truncate">' + esc(r.p.Nama) + '</b><small class="muted">' + esc(r.inf.jadwal) + ' · ' + (r.kunci ? 'terkunci' : 'draft') + '</small></span><b class="num danger">' + U.rpRingkas(r.laba) + '</b></a>'; }).join('') :
+          Grafik.gauge(Math.max(0, Math.min(100, Math.round(db.marginBulan.margin * 100))), 'Margin ' + lb)) + '</section></div>';
+      Hal.aksiPeta(el, { semuaAksi: function () { App.lonceng(document.getElementById('btn-lonceng')); } });
     },
-    segarkan: function (el) { H.isi(el, false); },
-    isi: function (el, animasi) {
-      var body = el.querySelector('#db-body'); if (!body) return;
-      var today = U.hariIni(), db = HT.dashboard(Store.D, { periode: st.periode, idTrip: st.trip, today: today, S: Store.S });
-      var mobile = window.innerWidth <= 720, admin = Store.isAdmin();
-      var stats = '<div class="bento two-sm stagger">' +
-        UI.stat({ hero: true, label: 'Laba final ' + db.periode.label, judul: 'Laba Trip (diaudit)', nilai: '<span title="' + U.rp(db.laba) + '">' + (mobile ? UI.hitung(db.laba, 'rpS') : UI.hitung(db.laba, 'rp')) + '</span>', kaki: '<span class="badge glass">' + ic('badge-check', 14) + db.tripFinal + ' trip final · margin ' + F.persen(db.margin) + '</span><span>Estimasi semua trip ' + U.rpRingkas(db.labaEstimasi) + '</span>', go: 'labarugi' }) +
-        UI.stat({ label: 'Operasional berjalan', judul: 'Trip Aktif', ikon: 'route', nilai: UI.hitung(db.tripAktif) + ' <small>Trip</small>', kaki: '<span>' + db.paxAktif + ' pax terdaftar</span><span class="badge">' + db.berangkatMingguIni + ' berangkat minggu ini</span>', go: 'rekap' }) +
-        UI.stat({ label: 'Arus kas tertahan', judul: 'Invoice Belum Lunas', ikon: 'receipt', tone: 'warn', nilai: UI.hitung(db.invBelum) + ' <small>invoice</small>', kaki: '<span class="warn num"><b>' + U.rpRingkas(db.invBelumNominal) + '</b></span>' + (db.invTelat ? '<span class="badge danger">' + ic('clock', 14) + db.invTelat + ' lewat jatuh tempo</span>' : '<span class="badge ok">Tidak ada yang telat</span>'), go: 'invoice' }) +
-        UI.stat({ label: 'Sisa tagihan', judul: 'Sisa Piutang', ikon: 'hand-coins', nilai: '<span title="' + U.rp(db.sisaPiutang) + '">' + (mobile ? UI.hitung(db.sisaPiutang, 'rpS') : UI.hitung(db.sisaPiutang, 'rp')) + '</span>', kaki: '<span>' + db.bookingMenunggu + ' booking menunggu pelunasan</span><span class="badge accent">Follow up</span>', go: 'penjualan' }) + '</div>';
-
-      var b = db.berikut, cd = b ? '<div class="card stat stat--ink lift" style="gap:14px;min-height:0"><div class="between"><span class="badge accent">H-' + b.hari + (b.hari === 0 ? ' · Hari ini' : ' Berangkat') + '</span>' + ic('sailboat', 22, 'muted') + '</div>' +
-        '<div class="row">' + Hal.tripFoto(b.trip, 'sm') + '<div class="row__text"><span class="label">Trip terdekat</span><h3 class="truncate" style="color:#fff;font-size:18px">' + esc(b.trip.Nama) + '</h3></div></div><small class="muted">' + esc(b.trip.Kode) + ' · ' + F.rentang(b.trip.Tgl_Berangkat, b.trip.Tgl_Pulang) + ' · ' + esc(b.trip.Meeting_Point) + '</small>' +
-        '<div class="countdown" id="cd" data-tgl="' + b.trip.Tgl_Berangkat + '"></div>' +
-        '<div class="between" style="font-size:13px"><span class="muted">Manifest final</span><b style="color:' + (b.manifestFinal >= b.pax ? '#4FD1A0' : '#FFC27A') + '">' + ic(b.manifestFinal >= b.pax ? 'circle-check' : 'clock', 16) + ' ' + b.manifestFinal + '/' + b.pax + ' pax</b></div>' +
-        '<a class="btn btn--white btn--block" href="#/manifest/' + b.trip.ID_Trip + '">Lihat Manifest & Kalender ' + ic('arrow-right', 18) + '</a></div>' : '<div class="card">' + UI.kosong('calendar', 'Belum ada trip mendatang', 'Tambah trip di Pengaturan → Master Data.') + '</div>';
-
-      var grafik = '<div class="card lift"><div class="card__head"><div class="card__title"><span class="label">Financial flow monitoring</span><h2>Pendapatan vs Biaya Operasional</h2></div><span class="badge ink">' + F.persen(db.margin) + ' profit margin</span></div>' +
-        Grafik.kapsul(db.seri.map(function (s) { return { label: s.label, a: s.pendapatan, b: s.biaya, kini: s.kini }; }), { lb: 'Biaya (realisasi/budget)' }) +
-        '<div class="between wrap" style="margin-top:8px"><div class="legend"><span><i style="background:var(--c-primary)"></i>Pendapatan</span><span><i class="hatch" style="border:1px solid var(--c-primary-soft)"></i>Biaya</span></div><a class="btn btn--plain btn--sm" href="#/labarugi">Detail laba rugi ' + ic('arrow-right', 16) + '</a></div></div>';
-
-      var gauge = '<div class="card lift stack" style="gap:12px"><div class="card__head" style="margin:0"><div class="card__title"><span class="label">Collection rate</span><h2>Persentase Pelunasan</h2></div><span class="badge ' + (db.collection >= 80 ? 'ok' : 'warn') + '">' + (db.collection >= 80 ? 'Sangat baik' : 'Perlu dikejar') + '</span></div>' +
-        Grafik.gauge(db.collection, 'Tagihan terbayar') +
-        '<div class="box stack" style="background:var(--c-surface-2);border:1px solid var(--c-border);border-radius:var(--r-md);padding:12px;gap:8px"><div class="between" style="font-size:13px"><span class="muted">Target pelunasan</span><b class="num">90%</b></div><div class="progress"><i style="width:' + Math.min(100, db.collection / 90 * 100) + '%"></i></div><small class="muted" style="text-align:center">Terbayar ' + U.rpRingkas(db.totalBayar) + ' dari ' + U.rpRingkas(db.totalTagihan) + '</small></div></div>';
-
-      var inv = db.invoiceTerbaru;
-      var tabel = '<div class="card card--pad0 lift"><div class="card__head" style="padding:20px 20px 0"><div class="card__title"><span class="label">Aktivitas tagihan & integrasi kalender</span><h2>Invoice Terbaru & Status Calendar</h2></div><a class="btn btn--soft btn--sm" href="#/invoice">Lihat semua (' + Store.D.Invoice.length + ')</a></div>' +
-        UI.tabel({ kolom: [
-          { label: 'No. invoice & customer', render: function (i) { var pj = Store.get('Penjualan', i.ID_Penjualan) || {}, c = Store.get('Customer', pj.ID_Customer) || {}; return '<div class="cell-main">' + UI.avatar(c.Nama) + '<div class="row__text"><b class="truncate">' + esc(c.Nama) + '</b><span class="sub mono">' + esc(i.No_Invoice) + '</span></div></div>'; } },
-          { label: 'Trip', render: function (i) { var pj = Store.get('Penjualan', i.ID_Penjualan) || {}, t = Store.get('Trip', pj.ID_Trip) || {}; return '<span class="truncate" style="display:block;max-width:200px">' + esc(t.Nama) + '</span><span class="sub">' + pj.Jumlah_Pax + ' pax · ' + U.tglId(t.Tgl_Berangkat) + '</span>'; } },
-          { label: 'Nominal', num: true, render: function (i) { return '<b>' + F.rpTip(i.Nominal) + '</b><span class="sub">' + esc(i.Jenis) + '</span>'; } },
-          { label: 'Status bayar', render: function (i) { var telat = i.Status === 'Terbit' && i.Jatuh_Tempo < today; return UI.badge(telat ? 'Jatuh Tempo' : i.Status === 'Terbit' ? 'Menunggu' : i.Status); } },
-          { label: 'Calendar', render: calChip }
-        ], baris: inv, klik: function (i) { return i.No_Invoice; }, kosong: 'Belum ada invoice' }) + '</div>';
-
-      var antre = db.antrean.slice(0, 5), pending = Store.D.Pembayaran.filter(function (x) { return x.Status_Verifikasi === 'Menunggu'; });
-      var rAntre = db.realisasiAntre.filter(function (a) { return a.peran === (admin ? 'Admin' : 'Finance'); }).slice(0, 4);
-      var kartuRls = (rAntre.length || db.tripOver.length) ? '<div class="card lift' + (db.tripOver.length ? ' card--alert' : '') + '"><div class="card__head"><div class="card__title"><span class="label">Realisasi anggaran trip</span><h2>' + (admin ? 'Laporkan ke Finance' : 'Audit realisasi') + '</h2></div><span class="badge ' + (rAntre.length ? 'warn' : 'ok') + '">' + rAntre.length + ' menunggu</span></div><div class="stack" style="gap:10px">' +
-        rAntre.map(function (a) { return '<div class="kv" style="grid-template-columns:auto 1fr;align-items:center;gap:10px">' + Hal.tripFoto(a.r.trip, 'sm') + '<div class="row__text" style="text-align:left"><div class="between" style="gap:6px"><b class="truncate">' + esc(a.r.trip.Nama) + '</b>' + Realisasi.badgeStatus(a.r.statusAudit) + '</div><small class="muted">' + esc(a.label) + ' · ' + U.rp(a.r.realisasi) + ' / RAB ' + U.rpRingkas(a.r.budget) + '</small>' + (a.r.overBudget ? '<div style="margin-top:4px">' + Realisasi.tanda(a.r, true) + '</div>' : '') + '<div style="margin-top:8px"><a class="btn btn--soft btn--sm" href="#/budget/' + a.r.ID_Trip + '?tab=realisasi">' + ic(admin ? 'send' : 'shield-check', 16) + (admin ? 'Buka realisasi' : 'Audit sekarang') + '</a></div></div></div>'; }).join('') +
-        (db.tripOver.length ? '<div class="note danger">' + ic('triangle-alert') + '<span><b>' + db.tripOver.length + ' trip melebihi RAB:</b> ' + db.tripOver.map(function (r) { return esc(r.trip.Kode) + ' +' + U.rpRingkas(r.lebih); }).join(' · ') + '</span></div>' : '') + '</div></div>' : '';
-      var queue = '<div class="card lift"><div class="card__head"><div class="card__title"><span class="label">' + (admin ? 'Admin action queue' : 'Finance action queue') + '</span><h2>Review Peserta & DP Masuk</h2></div><span class="badge ' + (antre.length + pending.length ? 'danger' : 'ok') + '">' + (antre.length + pending.length) + ' menunggu</span></div><div class="stack stagger" style="gap:10px">' +
-        pending.slice(0, 2).map(function (p) { var pj = Store.get('Penjualan', p.ID_Penjualan) || {}, c = Store.get('Customer', pj.ID_Customer) || {}; return '<div class="kv" style="grid-template-columns:auto 1fr;align-items:center;gap:10px">' + UI.avatar(c.Nama, '', 'sm') + '<div class="row__text" style="text-align:left"><div class="between"><b class="truncate">' + esc(c.Nama) + '</b><span class="badge warn">Bukti masuk</span></div><small class="muted">' + esc(p.Jenis) + ' ' + U.rp(p.Nominal) + ' via ' + esc(p.Metode) + '</small><div style="margin-top:8px"><button class="btn btn--soft btn--sm" data-act="mutasi" data-id="' + p.ID_Penjualan + '">' + ic('scan-line', 16) + 'Cek mutasi</button></div></div></div>'; }).join('') +
-        antre.map(function (a) { return '<div class="kv" style="grid-template-columns:auto 1fr;align-items:center;gap:10px">' + UI.avatar(a.r.cust.Nama, '', 'sm') + '<div class="row__text" style="text-align:left"><div class="between"><b class="truncate">' + esc(a.r.cust.Nama) + '</b><span class="badge ' + (a.jenis === 'telat' ? 'danger' : 'warn') + '">' + esc(a.label) + '</span></div><small class="muted truncate" style="display:block">' + esc(a.r.trip.Nama) + ' · sisa ' + U.rp(a.r.sisa) + '</small>' + (aksiAntrean(a) ? '<div style="margin-top:8px">' + aksiAntrean(a) + '</div>' : '') + '</div></div>'; }).join('') +
-        (!antre.length && !pending.length ? UI.kosong('circle-check', 'Semua beres', 'Tidak ada review yang tertunda.') : '') +
-        '<div class="note ok">' + ic('workflow') + '<span>Otomasi manifest & Calendar aktif — invoice baru langsung masuk Peserta Trip.</span></div></div></div>';
-
-      body.innerHTML = stats + '<div class="grid-12"><div class="span-6 span-lg-12">' + grafik + '</div><div class="span-3 span-lg-6 span-md-6">' + gauge + '</div><div class="span-3 span-lg-6 span-md-6">' + cd + '</div></div>' +
-        '<div class="grid-12"><div class="span-8 span-lg-12">' + tabel + '</div><div class="span-4 span-lg-12 stack" style="gap:16px">' + kartuRls + queue + '</div></div>';
-      body.querySelectorAll('tr[data-row]').forEach(function (tr) { tr.onclick = function () { App.go('invoice/lihat/' + encodeURIComponent(tr.dataset.row)); }; });
-      if (animasi) { UI.hitungNaik(body); }
-      Grafik.hidupkan(body); hitungMundur();
-    }
+    segarkan: function (el) { var y = scrollY; H.render(el); window.scrollTo(0, y); UI.pasTeks(el); }
   };
-  window.Halaman.dashboard = H;
 })();
