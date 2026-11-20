@@ -7,7 +7,7 @@
 (function () {
   'use strict';
   var C = window.Core, Store = C.Store, esc = C.esc, ic = C.ic, F = C.F, U = C.U, HT = C.HT;
-  var IKON = { kalkulasi: 'calculator', manifest: 'clipboard-list', rekap: 'chart-column', kunci: 'lock', tagihan: 'hand-coins' };
+  var IKON = { kalkulasi: 'calculator', budgettl: 'wallet-cards', manifest: 'clipboard-list', rekap: 'chart-column', kunci: 'lock', tagihan: 'hand-coins' };
 
   function sapa() { var j = new Date(Date.now() + 7 * 3600e3).getUTCHours(); return j < 11 ? 'Selamat pagi' : j < 15 ? 'Selamat siang' : j < 18 ? 'Selamat sore' : 'Selamat malam'; }
   function persen(x) { return (Math.round(x * 1000) / 10).toString().replace('.', ',') + '%'; }

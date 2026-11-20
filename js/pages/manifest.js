@@ -1,7 +1,7 @@
 /* =====================================================================
    YukBanyuwangi — Manifest Tim Lapang
    Susun manifest (data tim, tamu, daftar peserta, checklist, catatan,
-   itinerary dari Google Docs, budgeting dari kalkulasi) → pratinjau A4
+   itinerary dari Google Docs, budgeting dari menu Budgeting TL) → pratinjau A4
    langsung → terbitkan PDF (Drive) → otomatis terlampir di event Google
    Calendar pesanan → undang email Tim Lapang.
    ===================================================================== */
@@ -40,9 +40,10 @@
   var token = 0;
   async function pratinjau(el) {
     var box = el.querySelector('#mf-kertas'); if (!box) return;
-    var t = ++token, k = await Dok.tataManifest(dataDraft());
+    var t = ++token, m = dataDraft(), k = await Dok.tataManifest(m);
     if (t !== token || !box.isConnected) return;
-    box.innerHTML = Dok.svgDari(k).map(function (s, i) { return '<div class="kertas">' + s + '<span class="kertas__no">' + (i + 1) + '/' + k.hal.length + '</span></div>'; }).join('');
+    Dok.panelHalaman(box, k, { judul: 'Manifest ' + (m.tamu.nama || m.p.Nama), nama: m.namaFile, sub: k.hal.length + ' halaman A4 · pratinjau dari isian saat ini (termasuk yang belum disimpan)' });
+    var nh = el.querySelector('#mf-nhal'); if (nh) nh.textContent = k.hal.length + ' halaman';
     st.kanvas = k;
   }
   var pratinjauNanti = C.debounce(function (el) { pratinjau(el); }, 380);
@@ -86,7 +87,7 @@
   // ---------------------------------------------------------------- daftar
   function daftarRows() {
     var S = Store.S, today = U.hariIni(), ix = HT.indeks(Store.D);
-    var rows = Store.D.Pesanan.map(function (p) { var i = HT.infoPesanan(p, S); i.p = p; i.m = ix.mnf[p.ID_Pesanan]; i.k = !!ix.kal[p.ID_Pesanan]; i.ev = ix.evt[p.ID_Pesanan]; i.h = i.mulai ? U.selisihHari(today, i.mulai) : null; return i; });
+    var rows = Store.D.Pesanan.map(function (p) { var i = HT.infoPesanan(p, S); i.p = p; i.m = ix.mnf[p.ID_Pesanan]; i.bt = HT.budgetTL(ix, p.ID_Pesanan); i.ev = ix.evt[p.ID_Pesanan]; i.h = i.mulai ? U.selisihHari(today, i.mulai) : null; return i; });
     if (st.daftar === 'dekat') rows = rows.filter(function (i) { return i.h !== null && i.selesai >= today && i.h <= 14; });
     if (st.daftar === 'mendatang') rows = rows.filter(function (i) { return i.selesai && i.selesai >= today; });
     if (st.daftar === 'ulang') rows = rows.filter(function (i) { return i.m && i.m.Status === 'Berubah'; });
@@ -99,7 +100,7 @@
         { label: 'Jadwal', render: function (i) { return esc(i.jadwal || '-') + (i.h !== null && i.h >= 0 ? '<span class="sub">' + (i.h === 0 ? 'Hari ini' : 'H-' + i.h) + '</span>' : i.mulai && i.selesai >= U.hariIni() ? '<span class="sub">Berjalan</span>' : ''); } },
         { label: 'Pax', num: true, render: function (i) { return i.pax; } },
         { label: 'Tim Lapang', render: function (i) { var t = i.m ? (U.parseJson(i.m.TL, []) || []) : []; return t.length ? esc(t.map(function (x) { return x.nama; }).join(', ')) : '<span class="muted">—</span>'; } },
-        { label: 'Kalkulasi', render: function (i) { return i.k ? UI.badge('Ada', 'ok') : UI.badge('Belum', 'neutral'); } },
+        { label: 'Budgeting TL', render: function (i) { return i.bt.ada ? UI.badge(i.bt.tersimpan ? 'Ada' : 'Kalkulasi lama', i.bt.tersimpan ? 'ok' : 'warn') + '<span class="sub">' + U.rpRingkas(i.bt.terima) + '</span>' : UI.badge('Belum', 'neutral'); } },
         { label: 'Manifest', render: function (i) { return i.m ? UI.badge(i.m.Status === 'Terbit' ? 'Terbit' : i.m.Status, null) + (i.m.Status === 'Terbit' ? '<span class="sub">v' + i.m.Versi + '</span>' : '') : UI.badge('Belum Dibuat'); } },
         { label: 'Calendar', render: function (i) { var u = i.m ? (U.parseJson(i.m.Diundang, []) || []).length : 0; return !i.mulai ? '<span class="muted">—</span>' : i.ev && i.ev.Status === 'OK' ? '<span class="ok">' + ic('calendar-check', 18) + '</span>' + (u ? '<span class="sub">' + u + ' diundang</span>' : '') : i.ev && i.ev.Status === 'Gagal' ? '<span class="danger" title="' + esc(i.ev.Pesan) + '">' + ic('calendar-x', 18) + '</span>' : '<span class="muted" title="Menunggu sinkron">' + ic('clock', 18) + '</span>'; } }
       ] });
@@ -138,7 +139,7 @@
     return '<div class="between" style="margin-bottom:10px"><b>Status</b>' + UI.badge(status) + '</div>' +
       (m && m.Status !== 'Draft' && m.Link_PDF ? '<a class="menu-item" href="' + esc(m.Link_PDF) + '" target="_blank" rel="noopener">' + ic('file-text', 18) + '<span class="row__text"><b>Manifest v' + m.Versi + '.pdf</b><small class="muted" style="display:block">Terbit ' + esc(C.F.waktu(m.Diterbitkan)) + '</small></span>' + ic('external-link', 16, 'muted') + '</a>' : '') +
       '<p class="muted" style="font-size:13px;margin:6px 0 12px">' + ic(ev && ev.Status === 'Gagal' ? 'calendar-x' : 'calendar-check', 15) + ' ' + esc(calTeks) + '</p>' +
-      (status === 'Berubah' ? '<div class="note warn" style="margin-bottom:12px">' + ic('triangle-alert') + '<span>Ada perubahan (manifest atau kalkulasi) setelah terbit. Terbitkan ulang agar PDF di Calendar ikut diperbarui.</span></div>' : '') +
+      (status === 'Berubah' ? '<div class="note warn" style="margin-bottom:12px">' + ic('triangle-alert') + '<span>Ada perubahan (manifest atau budgeting TL) setelah terbit. Terbitkan ulang agar PDF di Calendar ikut diperbarui.</span></div>' : '') +
       '<div class="stack" style="gap:8px"><button class="btn btn--primary btn--block" data-act="terbit">' + ic('send', 18) + '<span>' + (m && m.Versi > 0 ? 'Terbitkan ulang (v' + (Number(m.Versi) + 1) + ')' : 'Terbitkan PDF ke Calendar') + '</span></button>' +
       '<div class="row" style="gap:8px"><button class="btn btn--ghost grow" data-act="simpan">' + ic('save', 18) + '<span>Simpan draft</span></button><button class="btn btn--ghost" data-act="besar" aria-label="Pratinjau besar & unduh">' + ic('maximize-2', 18) + '</button></div></div>' +
       (m && m.Status !== 'Draft' && m.File_ID ? '<div class="undang"><b>Undang Tim Lapang ke Calendar</b>' + (st.tl.length ? st.tl.map(function (t) {
@@ -169,7 +170,7 @@
     },
     editor: function (el) {
       var box = el.querySelector('#mf'); if (!box) return;
-      var p = Store.get('Pesanan', st.id), inf = HT.infoPesanan(p, Store.S), kal = HT.ringkasKalkulasi(HT.indeks(Store.D), st.id), S = Store.S;
+      var p = Store.get('Pesanan', st.id), inf = HT.infoPesanan(p, Store.S), bt = HT.budgetTL(HT.indeks(Store.D), st.id), S = Store.S;
       box.innerHTML = Hal.kepala({ crumbs: ['Manifest', p.Tab], judul: p.Nama, sub: esc(p.Trip) + ' · ' + esc(inf.jadwal || 'tanpa tanggal') + ' · ' + inf.pax + ' pax', aksi: '<a class="btn btn--ghost" href="#/manifest">' + ic('arrow-left', 18) + '<span>Daftar</span></a>' }) + Hal.alurHTML(p) +
         '<div class="mf-grid"><div class="stack" id="mf-form" style="gap:16px">' +
         '<section class="card"><h2 class="card-h">' + esc(S.MNF_L_TIM || 'Data tim') + '</h2><div class="form"><div class="field"><label for="mf-pic">Nama PIC (kantor)</label><input class="input" id="mf-pic" data-s="pic" value="' + esc(st.pic) + '"></div><div class="field"><label for="mf-dur">Durasi trip</label><input class="input" id="mf-dur" data-s="durasi" value="' + esc(st.durasi) + '"></div></div>' +
@@ -181,8 +182,8 @@
         '<section class="card"><div class="between wrap" style="margin-bottom:10px"><h2 class="card-h" style="margin:0">' + esc(S.MNF_L_ITIN || 'Itinerary') + ' <span class="badge neutral" id="mf-ni"></span></h2><button class="btn btn--soft btn--sm" data-act="itin">' + ic('file-text', 16) + 'Ambil dari Google Docs</button></div>' +
         '<div class="input-ic" style="margin-bottom:8px">' + ic('link', 18) + '<input class="input" id="mf-itl" type="url" placeholder="Link Google Docs itinerary" value="' + esc(p.Link_Itinerary || '') + '"></div>' +
         '<textarea class="textarea mono-ringan" id="mf-itin" data-s="itin" rows="10" placeholder="Hari Pertama&#10;07:00 Penjemputan di stasiun…">' + esc(st.itin) + '</textarea><p class="help muted" style="margin-top:6px">Baris diawali "Hari Pertama/Kedua…" menjadi judul hari (tanggal ditambahkan otomatis), baris diawali jam (07:00) menjadi kegiatan.</p></section>' +
-        '<section class="card"><div class="between"><div><h2 class="card-h" style="margin:0">' + esc(S.MNF_L_BUDGET || 'Budgeting') + '</h2><p class="muted" style="margin-top:4px">' + (kal.ada ? kal.tl.length + ' item Ke TL · budget ' + U.rp(kal.totalTL) + ' · terima TL ' + U.rp(kal.terimaTL) : 'Belum ada kalkulasi.') + ' <a href="#/kalkulasi/' + st.id + '">Ubah di Kalkulasi</a></p></div><label class="switch"><input type="checkbox" id="mf-bud"' + (st.tampilBudget ? ' checked' : '') + '><span class="track"></span><span class="hide-sm">Tampilkan</span></label></div></section>' +
-        '</div><aside class="mf-samping"><div class="card card--tight" id="mf-panel">' + panelTerbit() + '</div><div class="card card--pad0 kertas-panel"><div class="kertas-panel__h"><b>Pratinjau A4</b><small class="muted">Sama persis dengan PDF</small></div><div id="mf-kertas" class="kertas-tumpuk">' + UI.kerangka(6, 3) + '</div></div></aside></div>';
+        '<section class="card"><div class="between"><div><h2 class="card-h" style="margin:0">' + esc(S.MNF_L_BUDGET || 'Budgeting') + '</h2><p class="muted" style="margin-top:4px">' + (bt.ada ? bt.n + ' baris · budget ' + U.rp(bt.total) + ' · terima TL ' + U.rp(bt.terima) + (bt.tersimpan ? '' : ' (dari kalkulasi versi lama)') : 'Budgeting TL belum diisi.') + ' <a href="#/budgettl/' + st.id + '">' + (bt.ada ? 'Ubah di Budgeting TL' : 'Isi Budgeting TL') + '</a></p></div><label class="switch"><input type="checkbox" id="mf-bud"' + (st.tampilBudget ? ' checked' : '') + '><span class="track"></span><span class="hide-sm">Tampilkan</span></label></div></section>' +
+        '</div><aside class="mf-samping mf-samping--gulir"><div class="card card--pad0 kertas-panel"><div class="kertas-panel__h"><b>Pratinjau A4</b><small class="muted" id="mf-nhal">Sama persis dengan PDF</small></div><div id="mf-kertas" class="kertas-tumpuk">' + UI.kerangka(6, 3) + '</div></div><div class="card card--tight" id="mf-panel">' + panelTerbit() + '</div></aside></div>';
       var form = box.querySelector('#mf-form');
       function ubah() { st.kotor = true; pratinjauNanti(el); var np = box.querySelector('#mf-np'); if (np) np.textContent = pesertaParse().length + ' nama'; var ni = box.querySelector('#mf-ni'); if (ni) ni.textContent = HT.parseItinerary(st.itin, inf.mulai).length + ' hari'; }
       form.addEventListener('input', function (e) {
@@ -216,7 +217,7 @@
         simpan: async function (d, b) { var r = await C.aksi('manifest.simpan', payload(), { btn: b }); if (r.success) { st.kotor = false; box.querySelector('#mf-panel').innerHTML = panelTerbit(); } },
         terbit: function () { terbit(el); },
         undang: function (d, b) { undang(el, b); },
-        besar: async function () { var m = dataDraft(), k = await Dok.tataManifest(m); Dok.pratinjauKanvas('Manifest ' + p.Nama, k, { nama: m.namaFile, sub: 'Pratinjau dari isian saat ini (termasuk yang belum disimpan).' }); }
+        besar: async function () { var m = dataDraft(), k = await Dok.tataManifest(m); Dok.penampil(k, { judul: 'Manifest ' + p.Nama, nama: m.namaFile, sub: k.hal.length + ' halaman A4 · pratinjau dari isian saat ini (termasuk yang belum disimpan)' }); }
       });
       var ni = box.querySelector('#mf-ni'); if (ni) ni.textContent = HT.parseItinerary(st.itin, inf.mulai).length + ' hari';
       pratinjau(el);

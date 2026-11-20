@@ -1,7 +1,8 @@
 /* =====================================================================
    YukBanyuwangi — Rekapitulasi
-   Tabel per bulan persis template "Dummy Rekapitulasi" (bagian
-   YukBanyuwangi & Sunrise Boat). Draft rekap = BUDGET kalkulasi; setelah
+   Per bulan mengikuti template "Dummy Rekapitulasi": judul (YUKBANYUWANGI)
+   lalu satu tabel per tab master data (KLB, OT Sunrise Boat, Private SB…),
+   kolom mengikuti jenis tab (YB / SB). Draft rekap = BUDGET kalkulasi; setelah
    trip Admin menambah over budget (KONSUM / LL…) & pengeluaran yang tidak
    lewat manifest (kendaraan, penginapan, paket pulau), lalu mengajukan.
    Finance mengecek & mengunci margin. Unduh Excel/PDF, tulis ke Google Sheet.
@@ -12,12 +13,17 @@
   var st = { bulan: '', ed: null, drawer: null };
 
   function bulan() { return st.bulan || U.hariIni().slice(0, 7); }
-  function data() { var per = HT.rentangPeriode(bulan(), U.hariIni()); return { per: per, rows: HT.rekapDaftar(Store.D, { dari: per.dari, sampai: per.sampai, S: Store.S, today: U.hariIni() }), L: HT.labelRekap(Store.S) }; }
+  function data() {
+    var per = HT.rentangPeriode(bulan(), U.hariIni()), sh = HT.dataRekapSheet(Store.D, Store.S, U.hariIni(), bulan()), rows = [];
+    sh.tabs.forEach(function (t) { rows = rows.concat(t.rk); });
+    return { per: per, rows: rows, tabs: sh.tabs, sheet: sh, L: HT.labelRekap(Store.S) };
+  }
   function persen(x) { return (Math.round(x * 10000) / 100).toFixed(2).replace('.', ',') + '%'; }
   function u(v) { return v ? U.ribuan(v) : ''; }
 
-  function tabelBagian(b, rows, L) {
-    var lb = L[b].L, kol = L[b].kolom, adaHpp = !!String(lb.HPP || '').trim();
+  function tabelBagian(tb, L) {
+    var b = tb.bagian === 'SB' ? 'SB' : 'YB', rows = tb.rk, lb = L[b].L, kol = L[b].kolom, adaHpp = !!String(lb.HPP || '').trim();
+    if (!rows.length) return '<section class="card rk-bagian rk-bagian--kosong"><div class="rk-bagian__h"><h2>' + esc(String(tb.nama).toUpperCase()) + '</h2><span class="muted">Belum ada trip di bulan ini · kolom ' + (b === 'SB' ? 'Sunrise Boat' : 'YukBanyuwangi') + '</span></div></section>';
     var h1 = '<tr><th rowspan="2" class="num">' + esc(lb.NO) + '</th><th rowspan="2" class="rk__kode">' + esc(lb.KODE) + '</th><th rowspan="2" class="num">' + esc(lb.QTY) + '</th><th rowspan="2">' + esc(lb.PIC) + '</th><th rowspan="2" class="num">' + esc(lb.PRICE) + '</th><th rowspan="2" class="num rk__jual">' + esc(lb.PENJUALAN) + '</th>' +
       (adaHpp ? '<th colspan="' + kol.length + '" class="center rk__hpp">' + esc(lb.HPP) + '</th>' : kol.map(function (k) { return '<th rowspan="2" class="num">' + esc(k.l) + '</th>'; }).join('')) +
       '<th rowspan="2" class="num rk__peng">' + esc(lb.PENGELUARAN) + '</th><th rowspan="2" class="num">' + esc(lb.LABA) + '</th><th class="num">' + esc(lb.MARGIN_A) + '</th><th class="num">' + esc(lb.RATAAN_A) + '</th></tr>';
@@ -31,8 +37,8 @@
         '<td class="num rk__peng">' + u(r.pengeluaran) + '</td><td class="num ' + (r.rugi ? 'danger' : '') + '">' + U.ribuan(r.laba) + '</td><td class="num ' + (r.rugi ? 'danger' : '') + '">' + U.ribuan(r.laba) + '</td><td class="num">' + persen(r.margin) + '</td></tr>';
     }).join('');
     var foot = '<tfoot><tr><td></td><td><b>TOTAL</b></td><td class="num">' + t.pax + '</td><td></td><td></td><td class="num">' + u(t.penjualan) + '</td>' + kol.map(function (k) { return '<td class="num">' + u(tk[k.k]) + '</td>'; }).join('') + '<td class="num">' + u(t.pengeluaran) + '</td><td class="num">' + U.ribuan(t.laba) + '</td><td class="num">' + U.ribuan(t.laba) + '</td><td class="num">' + persen(t.margin) + '</td></tr></tfoot>';
-    return '<section class="card card--pad0 rk-bagian"><div class="rk-bagian__h"><h2>' + esc(lb.JUDUL) + '</h2><span class="muted">' + rows.length + ' trip · ' + t.terkunci + ' terkunci · margin ' + persen(t.margin) + '</span></div>' +
-      (rows.length ? '<div class="lembar-wrap"><table class="lembar rk"><thead>' + h1 + h2 + '</thead><tbody>' + body + '</tbody>' + foot + '</table></div>' : '<div style="padding:8px 20px 20px">' + UI.kosong('chart-column', 'Tidak ada trip ' + lb.JUDUL + ' bulan ini') + '</div>') + '</section>';
+    return '<section class="card card--pad0 rk-bagian"><div class="rk-bagian__h"><h2>' + esc(String(tb.nama).toUpperCase()) + '</h2><span class="muted">' + rows.length + ' trip · ' + t.terkunci + ' terkunci · margin ' + persen(t.margin) + '</span><span class="badge ' + (b === 'SB' ? 'info' : 'neutral') + '" style="margin-left:auto">Kolom ' + (b === 'SB' ? 'Sunrise Boat' : 'YukBanyuwangi') + '</span></div>' +
+      '<div class="lembar-wrap"><table class="lembar rk"><thead>' + h1 + h2 + '</thead><tbody>' + body + '</tbody>' + foot + '</table></div></section>';
   }
 
   // ---------------------------------------------------------------- editor drawer
@@ -77,7 +83,7 @@
     var p = Store.get('Pesanan', id), r = rkDraft(id); if (!r) { UI.toast('Data rekap tidak ditemukan.', 'warn'); return; }
     if (st.drawer && !st.drawer.h.ditutup) st.drawer.h.tutup();
     mulaiEdit(id);
-    var h = UI.drawer({ kepala: '<div class="between"><span class="label">Rekap · ' + esc(r.bagian === 'SB' ? 'Sunrise Boat' : 'YukBanyuwangi') + '</span><div class="row" style="gap:6px">' + UI.badge(r.status) + '<button class="icon-btn" data-tutup aria-label="Tutup">' + ic('x') + '</button></div></div>' + Hal.kartuPesanan(r.p),
+    var h = UI.drawer({ kepala: '<div class="between"><span class="label">Rekap · ' + esc(r.p.Tab || (r.bagian === 'SB' ? 'Sunrise Boat' : 'YukBanyuwangi')) + '</span><div class="row" style="gap:6px">' + UI.badge(r.status) + '<button class="icon-btn" data-tutup aria-label="Tutup">' + ic('x') + '</button></div></div>' + Hal.kartuPesanan(r.p),
       isi: isiEditor(id), kaki: kakiEditor(id), onTutup: function () { st.drawer = null; st.ed = null; if (/[?&]id=/.test(location.hash)) history.replaceState(null, '', '#/rekap?bulan=' + bulan()); } });
     st.drawer = { h: h, id: id };
     function segar(semua) { var b = h.el.querySelector('.drawer__body'), y = b.scrollTop; if (semua) b.innerHTML = isiEditor(id); else { var tmp = document.createElement('div'); tmp.innerHTML = isiEditor(id); var tc = tmp.querySelectorAll(':scope > .card'), bc = b.querySelectorAll(':scope > .card'); if (tc.length !== bc.length) { b.innerHTML = tmp.innerHTML; } else { bc[0].replaceWith(tc[0]); bc[2].replaceWith(tc[2]); bc[3].querySelector('.between').innerHTML = tc[3].querySelector('.between').innerHTML; } } b.scrollTop = y; if (semua) { var f = h.el.querySelector('.drawer__foot'); if (f) f.innerHTML = kakiEditor(id); } }
@@ -111,7 +117,7 @@
       var selesai = UI.proses('Membuat Excel rekap'), list = [];
       try {
         if (b.dataset.x === 'bln') list = [HT.dataRekapSheet(Store.D, Store.S, U.hariIni(), bulan())];
-        else for (var m = 1; m <= 12; m++) { var d = HT.dataRekapSheet(Store.D, Store.S, U.hariIni(), y + '-' + U.pad(m, 2)); if (d.YB.length || d.SB.length) list.push(d); }
+        else for (var m = 1; m <= 12; m++) { var d = HT.dataRekapSheet(Store.D, Store.S, U.hariIni(), y + '-' + U.pad(m, 2)); if (d.n) list.push(d); }
         if (!list.length) { selesai(false); UI.toast('Tidak ada data rekap.', 'warn'); return; }
         await Dok.excelRekap('Rekapitulasi ' + (b.dataset.x === 'bln' ? U.labelBulan(bulan()) : y), list, L); selesai(true, 'Excel diunduh');
         C.api('laporan.catat', { jenis: 'rekap', periode: b.dataset.x === 'bln' ? bulan() : y, format: 'xlsx' }, { senyap: true });
@@ -123,7 +129,7 @@
     render: function (el, args, q) {
       if (q && /^\d{4}-\d{2}$/.test(q.bulan || '')) st.bulan = q.bulan;
       var d = data(), t = HT.totalRekap(d.rows), fin = Store.isFin(), adm = Store.isAdmin(), siap = d.rows.filter(function (r) { return r.status === 'Siap Dicek'; });
-      el.innerHTML = Hal.kepala({ judul: 'Rekapitulasi', sub: 'Format persis template rekap — per bulan tanggal trip. Laba rugi hanya memakai rekap yang sudah dikunci Finance.',
+      el.innerHTML = Hal.kepala({ judul: 'Rekapitulasi', sub: 'Format template rekap — satu tabel per kategori (tab master data), per bulan tanggal trip. Laba rugi hanya memakai rekap yang sudah dikunci Finance.',
         aksi: Hal.bulanPilih('rk-bln', bulan(), { maju: 6, mundur: 18 }) + '<button class="btn btn--ghost" data-act="excel">' + ic('file-spreadsheet', 18) + '<span>Excel</span></button><button class="btn btn--ghost" data-act="pdf">' + ic('file-down', 18) + '<span>PDF</span></button>' +
           (Store.S.REKAP_SHEET_AKTIF === 'YA' ? '<button class="btn btn--soft" data-act="sheet" title="Tulis ulang tab rekap bulan ini di file Google Sheets Rekapitulasi">' + ic('table-2', 18) + '<span class="hide-sm">Tulis ke Google Sheet</span></button>' : '') }) +
         '<div class="bento two-sm" style="margin-bottom:16px">' +
@@ -133,11 +139,12 @@
         UI.stat({ label: 'Terkunci Finance', nilai: t.terkunci + '<small> / ' + t.n + '</small>', ikon: 'lock', tone: t.terkunci === t.n && t.n ? 'ok' : '', kaki: '<span>' + t.siap + ' siap dicek' + (t.rugi ? ' · ' + t.rugi + ' rugi' : '') + '</span>' }) + '</div>' +
         (fin && siap.length ? '<div class="note warn between" style="margin-bottom:16px">' + '<span class="row" style="gap:8px">' + ic('clock') + '<span><b>' + siap.length + ' rekap</b> diajukan Admin dan menunggu dicek.</span></span><button class="btn btn--ok btn--sm" data-act="kunciSemua">' + ic('lock', 16) + 'Kunci semua (' + siap.length + ')</button></div>' : '') +
         '<div class="legend" style="margin-bottom:12px"><span><i class="rk-leg draft"></i>Draft / estimasi</span><span><i class="rk-leg siap"></i>Siap dicek</span><span><i class="rk-leg kunci"></i>Terkunci</span><span><i class="rk-leg tamb"></i>Termasuk pengeluaran tambahan</span></div>' +
-        '<div class="stack" style="gap:16px" id="rk-isi">' + ['YB', 'SB'].map(function (b) { return tabelBagian(b, d.rows.filter(function (r) { return r.bagian === b; }), d.L); }).join('') + '</div>';
+        '<div class="rk-judul"><h2>' + esc(d.L.JUDUL) + '</h2><span>Rekapitulasi ' + esc(U.labelBulan(bulan())) + ' · ' + d.tabs.length + ' kategori</span></div>' +
+        '<div class="stack" style="gap:16px" id="rk-isi">' + d.tabs.map(function (tb) { return tabelBagian(tb, d.L); }).join('') + '</div>';
       el.onchange = function (e) { if (e.target.id === 'rk-bln') { st.bulan = e.target.value; history.replaceState(null, '', '#/rekap?bulan=' + st.bulan); H.render(el, [], {}); UI.hitungNaik(el); } };
       Hal.aksiPeta(el, {
         excel: function (dd, b) { unduhExcel(b); },
-        pdf: async function () { var x = data(); await Dok.laporanRekap(x.rows, x.L, x.per.label); C.api('laporan.catat', { jenis: 'rekap', periode: bulan(), format: 'pdf' }, { senyap: true }); },
+        pdf: async function () { var x = data(); await Dok.laporanRekap(x.sheet, x.L, x.per.label); C.api('laporan.catat', { jenis: 'rekap', periode: bulan(), format: 'pdf' }, { senyap: true }); },
         sheet: async function (dd, b) { var r = await C.aksi('rekap.tulisSheet', { bulan: bulan() }, { btn: b, proses: 'Menjadwalkan tulis rekap ke Google Sheet', loadingText: 'Menulis…' }); if (r.success) C.Pekerja.jalan(); },
         kunciSemua: async function (dd, b) { var ids = data().rows.filter(function (r) { return r.status === 'Siap Dicek'; }).map(function (r) { return r.id; }); if (!(await UI.konfirmasi({ judul: 'Kunci ' + ids.length + ' rekap sekaligus?', teks: 'Margin dibekukan & masuk laba rugi.', ok: 'Kunci semua', ikon: 'lock' }))) return; var r = await C.aksi('rekap.kunci', { ids: ids }, { btn: b, proses: 'Mengunci margin' }); if (r.success) C.Pekerja.jalan(); }
       }, function (e) { var r = e.target.closest('tr[data-id]'); if (r) bukaEditor(r.dataset.id); });

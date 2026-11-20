@@ -256,7 +256,7 @@
     }
     if (m.tampilBudget && m.budget && m.budget.ada) {
       var bt = [100.9, 349.4, 425.6, 494.7], rows = [['', String(m.budget.pax || ''), '']];
-      (m.budget.items || [].concat.apply([], m.budget.grup.map(function (g) { return g.items; }))).forEach(function (it) { rows.push([it.Uraian, String(Math.round(it.Budget)), String(Math.round(it.Terima_TL))]); });
+      (m.budget.items || []).forEach(function (it) { rows.push(it.judul ? [it.uraian, '', '', 'judul'] : [it.uraian, String(Math.round(it.budget)), String(Math.round(it.terima))]); });
       rows.push(['TOTAL', String(Math.round(m.budget.total)), String(Math.round(m.budget.terima))]);
       y += m.itin && m.itin.length ? 42 : 30; var perlu = 34 + (rows.length + 1) * 19.4; if (y + (perlu < BAWAH - ATAS ? perlu : 34 + 6 * 19.4) > BAWAH + 10) { baru(); }
       k.teks(S.MNF_L_BUDGET || 'BUDGETING', 246.5, y, { uk: 10, tebal: true });
@@ -266,7 +266,7 @@
       kepala();
       rows.forEach(function (r, ri) {
         if (ty + 19.4 > BAWAH + 10) { k.garis(bt[0], ty, bt[3], ty, { tebal: .6, warna: '#7F7F7F' }); k.halamanBaru(); ty = 60; kepala(); }
-        var tebal = ri === rows.length - 1; garisBaris(ty, 19.4);
+        var tebal = ri === rows.length - 1 || r[3] === 'judul'; garisBaris(ty, 19.4);
         k.teks(r[0], bt[0] + 2.6, ty + 14.4, { uk: 10, tebal: tebal }); k.teks(r[1], bt[2] - 2, ty + 14.4, { uk: 10, tebal: tebal, rata: 'kanan' }); k.teks(r[2], bt[3] - 2.2, ty + 14.4, { uk: 10, tebal: tebal, rata: 'kanan' });
         ty += 19.4;
       });
@@ -277,11 +277,72 @@
   }
 
   // ================================================================ PRATINJAU & TERBIT
+  // ---------------------------------------------------------------- penampil halaman (slideshow layar penuh)
+  /** Buka semua halaman dokumen sebagai slideshow: tombol ‹ ›, panah keyboard, usap, nomor halaman, perbesar, unduh. */
+  function penampil(k, o) {
+    o = o || {}; var svgs = svgDari(k), n = svgs.length, i = Math.max(0, Math.min(n - 1, o.mulai || 0)), lebar = false, asal = document.activeElement;
+    var el = document.createElement('div'); el.className = 'penampil'; el.setAttribute('role', 'dialog'); el.setAttribute('aria-modal', 'true'); el.setAttribute('aria-label', o.judul || 'Pratinjau dokumen');
+    var aksi = (o.aksi || []).map(function (a, j) { return '<button class="btn btn--soft btn--sm" data-pa="' + j + '">' + (a.ikon ? ic(a.ikon, 16) : '') + '<span>' + esc(a.label) + '</span></button>'; }).join('');
+    el.innerHTML = '<div class="penampil__atas"><div class="penampil__judul"><b class="truncate">' + esc(o.judul || 'Pratinjau') + '</b><small class="truncate">' + esc(o.sub || (n + ' halaman A4 · sama persis dengan PDF')) + '</small></div>' +
+      '<div class="penampil__alat">' + aksi + '<button class="btn btn--ghost btn--sm penampil__lebar" data-p="lebar" aria-pressed="false">' + ic('maximize-2', 16) + '<span class="hide-sm">Lebar penuh</span></button>' +
+      (o.unduh === false ? '' : '<button class="btn btn--primary btn--sm" data-p="unduh">' + ic('file-down', 16) + '<span>Unduh PDF</span></button>') +
+      '<button class="icon-btn penampil__tutup" data-p="tutup" aria-label="Tutup pratinjau">' + ic('x', 22) + '</button></div></div>' +
+      '<div class="penampil__panggung"><button class="penampil__nav penampil__nav--kiri" data-p="prev" aria-label="Halaman sebelumnya">' + ic('chevron-left', 26) + '</button>' +
+      '<div class="penampil__jendela"><div class="penampil__jalur">' + svgs.map(function (sv, j) { return '<div class="penampil__hal" aria-hidden="' + (j !== i) + '"><div class="kertas">' + sv + '</div></div>'; }).join('') + '</div></div>' +
+      '<button class="penampil__nav penampil__nav--kanan" data-p="next" aria-label="Halaman berikutnya">' + ic('chevron-right', 26) + '</button></div>' +
+      '<div class="penampil__bawah"><span class="penampil__no" aria-live="polite"></span>' + (n > 1 ? '<div class="penampil__mini">' + svgs.map(function (sv, j) { return '<button class="penampil__thumb" data-p="ke" data-i="' + j + '" aria-label="Halaman ' + (j + 1) + '">' + (n <= 8 ? '<span class="kertas">' + sv + '</span>' : '') + '<i>' + (j + 1) + '</i></button>'; }).join('') + '</div>' : '') + '</div>';
+    document.body.appendChild(el); document.documentElement.classList.add('kunci-gulir');
+    var jalur = el.querySelector('.penampil__jalur'), halEl = el.querySelectorAll('.penampil__hal');
+    function ke(j, tanpaAnimasi) {
+      i = Math.max(0, Math.min(n - 1, j)); jalur.style.transition = tanpaAnimasi ? 'none' : ''; jalur.style.transform = 'translateX(' + (-i * 100) + '%)';
+      halEl.forEach(function (h, x) { h.setAttribute('aria-hidden', String(x !== i)); if (x === i) h.scrollTop = 0; });
+      el.querySelector('.penampil__no').textContent = 'Halaman ' + (i + 1) + ' dari ' + n;
+      el.querySelector('[data-p="prev"]').disabled = i === 0; el.querySelector('[data-p="next"]').disabled = i === n - 1;
+      el.querySelectorAll('.penampil__thumb').forEach(function (t, x) { t.classList.toggle('on', x === i); if (x === i) t.setAttribute('aria-current', 'page'); else t.removeAttribute('aria-current'); });
+      if (o.saatGanti) o.saatGanti(i);
+    }
+    function tutup() { document.removeEventListener('keydown', tombol, true); el.classList.remove('penampil--buka'); document.documentElement.classList.remove('kunci-gulir'); setTimeout(function () { el.remove(); }, 180); if (asal && asal.focus) try { asal.focus(); } catch (e) { } }
+    function tombol(e) {
+      if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); tutup(); }
+      else if (e.key === 'ArrowRight' || e.key === 'PageDown') { e.preventDefault(); ke(i + 1); }
+      else if (e.key === 'ArrowLeft' || e.key === 'PageUp') { e.preventDefault(); ke(i - 1); }
+      else if (e.key === 'Home') { e.preventDefault(); ke(0); } else if (e.key === 'End') { e.preventDefault(); ke(n - 1); }
+      else if (e.key === 'Tab') { var f = Array.from(el.querySelectorAll('button:not([disabled])')); if (!f.length) return; var a = f.indexOf(document.activeElement); if (e.shiftKey && a <= 0) { e.preventDefault(); f[f.length - 1].focus(); } else if (!e.shiftKey && a === f.length - 1) { e.preventDefault(); f[0].focus(); } }
+    }
+    document.addEventListener('keydown', tombol, true);
+    el.addEventListener('click', async function (e) {
+      var b = e.target.closest('[data-p],[data-pa]'); if (!b) { if (!digeser && (e.target === el || e.target.classList.contains('penampil__jendela') || e.target.classList.contains('penampil__hal'))) tutup(); digeser = false; return; }
+      if (b.dataset.pa != null) { var a = o.aksi[+b.dataset.pa]; if (a && a.klik) { var hasil = await a.klik(b); if (hasil !== false && a.tutup !== false) tutup(); } return; }
+      var p = b.dataset.p;
+      if (p === 'tutup') tutup(); else if (p === 'prev') ke(i - 1); else if (p === 'next') ke(i + 1); else if (p === 'ke') ke(+b.dataset.i);
+      else if (p === 'lebar') { lebar = !lebar; el.classList.toggle('penampil--lebar', lebar); b.setAttribute('aria-pressed', String(lebar)); b.querySelector('span') && (b.querySelector('span').textContent = lebar ? 'Pas layar' : 'Lebar penuh'); }
+      else if (p === 'unduh') { if (!bolehUnduh()) return; var selesai = UI.proses('Membuat PDF'); try { var d = await pdfDari(k); d.save(namaFile(o.nama || o.judul || 'dokumen') + '.pdf'); selesai(true, 'PDF diunduh'); } catch (er) { selesai(false); UI.toast(er.message, 'err'); } }
+    });
+    // usap kiri/kanan (ponsel & trackpad)
+    var x0 = null, y0 = 0, geser = 0, digeser = false, jendela = el.querySelector('.penampil__jendela');
+    jendela.addEventListener('pointerdown', function (e) { if (lebar && e.pointerType === 'mouse') return; x0 = e.clientX; y0 = e.clientY; geser = 0; });
+    jendela.addEventListener('pointermove', function (e) { if (x0 === null) return; geser = e.clientX - x0; if (Math.abs(geser) > Math.abs(e.clientY - y0) && Math.abs(geser) > 8) { jalur.style.transition = 'none'; jalur.style.transform = 'translateX(calc(' + (-i * 100) + '% + ' + geser + 'px))'; } });
+    function lepas() { if (x0 === null) return; var g = geser; x0 = null; digeser = Math.abs(g) > 8; jalur.style.transition = ''; if (g < -50) ke(i + 1); else if (g > 50) ke(i - 1); else ke(i); }
+    jendela.addEventListener('pointerup', lepas); jendela.addEventListener('pointercancel', lepas); jendela.addEventListener('pointerleave', lepas);
+    ke(i, true); requestAnimationFrame(function () { el.classList.add('penampil--buka'); var t = el.querySelector('[data-p="tutup"]'); if (t) t.focus(); });
+    return { tutup: tutup, ke: ke };
+  }
+  /** Pratinjau ringkas di panel samping: satu halaman, ‹ › dan nomor; klik halaman → penampil layar penuh. */
+  function panelHalaman(box, k, o) {
+    o = o || {}; var svgs = svgDari(k), n = svgs.length, i = Math.min(n - 1, +(box.dataset.i || 0)) || 0;
+    box.classList.add('lembar-panel');
+    box.innerHTML = '<button class="lembar-panel__kertas" type="button" aria-label="Buka pratinjau layar penuh (' + n + ' halaman)"><span class="kertas">' + svgs[i] + '</span><span class="lembar-panel__perbesar">' + ic('maximize-2', 16) + 'Klik untuk melihat semua halaman</span></button>' +
+      (n > 1 ? '<div class="lembar-panel__nav"><button class="icon-btn" data-lp="prev" aria-label="Halaman sebelumnya"' + (i === 0 ? ' disabled' : '') + '>' + ic('chevron-left', 20) + '</button><span>Halaman ' + (i + 1) + ' dari ' + n + '</span><button class="icon-btn" data-lp="next" aria-label="Halaman berikutnya"' + (i === n - 1 ? ' disabled' : '') + '>' + ic('chevron-right', 20) + '</button></div>' : '<div class="lembar-panel__nav"><span>1 halaman A4</span></div>');
+    box.onclick = function (e) {
+      var b = e.target.closest('[data-lp]');
+      if (b) { box.dataset.i = String(Math.max(0, Math.min(n - 1, i + (b.dataset.lp === 'next' ? 1 : -1)))); panelHalaman(box, k, o); return; }
+      if (e.target.closest('.lembar-panel__kertas')) penampil(k, Object.assign({}, o, { mulai: i, saatGanti: function (j) { box.dataset.i = String(j); } }));
+    };
+    box.dataset.i = String(i);
+  }
   function pratinjauKanvas(judul, k, o) {
     o = o || {};
-    var h = UI.modal({ judul: judul, sub: o.sub || '', ukuran: 'xl', isi: '<div class="kertas-panggung">' + svgDari(k).map(function (s, i) { return '<div class="kertas">' + s + (k.hal.length > 1 ? '<span class="kertas__no">Halaman ' + (i + 1) + ' dari ' + k.hal.length + '</span>' : '') + '</div>'; }).join('') + '</div>',
-      aksi: (o.aksi || []).concat([{ label: 'Unduh PDF', kelas: o.aksi && o.aksi.length ? 'btn--ghost' : 'btn--primary', ikon: 'file-down', tutup: false, klik: async function (hh, b) { if (!bolehUnduh()) return; var selesai = UI.proses('Membuat PDF'); try { var d = await pdfDari(k); d.save(namaFile(o.nama || judul) + '.pdf'); selesai(true, 'PDF diunduh'); } catch (e) { selesai(false); UI.toast(e.message, 'err'); } } }]) });
-    return h;
+    return penampil(k, { judul: judul, sub: o.sub, nama: o.nama || judul, aksi: (o.aksi || []).map(function (a) { return { label: a.label, ikon: a.ikon, tutup: a.tutup, klik: function (b) { return a.klik(null, b); } }; }) });
   }
   async function pdfBase64(k) { var d = await pdfDari(k); var s = d.output('datauristring'); return s.slice(s.indexOf(',') + 1); }
 
@@ -332,8 +393,8 @@
         startY: this.y, head: head, body: baris.map(function (r) { var a = r.map(function (c) { return c && typeof c === 'object' ? Object.assign({}, c, { content: aman(c.content) }) : aman(c); }); a.__grup = r.__grup; a.__alert = r.__alert; a.__redup = r.__redup; a.__total = r.__total; return a; }),
         foot: kaki ? [kaki.map(function (c) { return c && typeof c === 'object' ? Object.assign({}, c, { content: aman(c.content) }) : aman(c); })] : undefined, showFoot: 'lastPage', showHead: 'everyPage',
         theme: 'grid', margin: { top: 40, bottom: 48, left: this.M, right: this.M }, tableWidth: this.L, rowPageBreak: 'avoid',
-        styles: { font: 'helvetica', fontSize: o.kecil ? 7 : 8.2, cellPadding: { top: 3.5, bottom: 3.5, left: 4, right: 4 }, lineColor: RGB.garis, lineWidth: .5, textColor: RGB.teks, overflow: 'linebreak', valign: 'middle' },
-        headStyles: { fillColor: RGB.tint, textColor: RGB.gelap, fontStyle: 'bold', fontSize: o.kecil ? 6.8 : 7.8, valign: 'middle', halign: 'center' },
+        styles: { font: 'helvetica', fontSize: o.mini ? 6.4 : o.kecil ? 7 : 8.2, cellPadding: o.mini ? { top: 3, bottom: 3, left: 2.5, right: 2.5 } : { top: 3.5, bottom: 3.5, left: 4, right: 4 }, lineColor: RGB.garis, lineWidth: .5, textColor: RGB.teks, overflow: 'linebreak', valign: 'middle' },
+        headStyles: { fillColor: RGB.tint, textColor: RGB.gelap, fontStyle: 'bold', fontSize: o.mini ? 6.2 : o.kecil ? 6.8 : 7.8, valign: 'middle', halign: 'center' },
         footStyles: { fillColor: this.P, textColor: 255, fontStyle: 'bold' }, alternateRowStyles: { fillColor: [250, 252, 253] }, columnStyles: cs,
         didParseCell: function (dc) {
           if (dc.section !== 'body') return; var raw = dc.row.raw || {};
@@ -363,21 +424,22 @@
   async function siapPdf() { if (!bolehUnduh()) return false; await muat(CDN.jspdf); await muat(CDN.autotable); return true; }
   async function logoKop() { var d = await dataGambar(Store.S.LOGO_URL || 'assets/logo-yb.png'); return d && /^data:image\/(png|jpe?g)/.test(d) ? d : (d ? await keRaster(d) : null); }
 
-  /** Rekap per bulan (lanskap) — kolom mengikuti template (label diatur Admin). */
-  async function laporanRekap(rows, label, judulPeriode) {
-    if (!(await siapPdf())) return; var p = new Pdf({ judul: 'Rekapitulasi Trip', sub: judulPeriode, lanskap: true, logo: await logoKop() });
-    ['YB', 'SB'].forEach(function (b) {
-      var data = rows.filter(function (r) { return r.bagian === b; }); if (!data.length) return;
-      var L = label[b].L, kol = label[b].kolom;
-      p.bagian(L.JUDUL, data.length + ' trip');
+  /** Rekap per bulan (lanskap): judul (YUKBANYUWANGI) lalu satu tabel per tab master data — kolom ikut jenis tab. data = HT.dataRekapSheet(). */
+  async function laporanRekap(data, label, judulPeriode) {
+    if (!(await siapPdf())) return; var p = new Pdf({ judul: label.JUDUL || 'Rekapitulasi Trip', sub: 'Rekapitulasi ' + judulPeriode, lanskap: true, logo: await logoKop() });
+    (data.tabs || []).forEach(function (tb) {
+      var b = tb.bagian === 'SB' ? 'SB' : 'YB', rows = tb.rk || [], L = label[b].L, kol = label[b].kolom;
+      if (rows.length) p.cukup(130);   // judul tab tidak tertinggal sendirian di bawah halaman
+      p.bagian(String(tb.nama).toUpperCase(), rows.length ? rows.length + ' trip · kolom ' + (b === 'SB' ? 'Sunrise Boat' : 'YukBanyuwangi') : 'belum ada trip');
+      if (!rows.length) { p.teks('', 'Belum ada trip di bulan ini.'); return; }
       var head = [[{ content: L.NO, rowSpan: 2 }, { content: L.KODE, rowSpan: 2 }, { content: L.QTY, rowSpan: 2 }, { content: L.PIC, rowSpan: 2 }, { content: L.PRICE, rowSpan: 2 }, { content: L.PENJUALAN, rowSpan: 2 }].concat(L.HPP ? [{ content: L.HPP, colSpan: 10 }] : kol.map(function (k) { return { content: k.l, rowSpan: 2 }; })).concat([{ content: L.PENGELUARAN, rowSpan: 2 }, { content: L.LABA, rowSpan: 2 }, L.MARGIN_A, L.RATAAN_A]),
         (L.HPP ? kol.map(function (k) { return k.l; }) : []).concat([L.MARGIN_B, L.RATAAN_B])].map(function (r) { return r.map(function (c) { return typeof c === 'object' ? Object.assign({}, c, { content: aman(c.content) }) : aman(c); }); });
-      var body = data.map(function (r, i) { var a = [String(i + 1), r.kode + (r.kunci ? '' : '  (draft)'), String(r.inf.pax), b === 'SB' ? r.kapal : r.p.PIC, U.ribuan(r.inf.harga), U.ribuan(r.penjualan)].concat(kol.map(function (k) { return r.kol[k.k] ? U.ribuan(r.kol[k.k]) : ''; })).concat([U.ribuan(r.pengeluaran), U.ribuan(r.laba), U.ribuan(r.laba), (Math.round(r.margin * 10000) / 100).toFixed(2).replace('.', ',') + '%']); if (r.rugi) a.__alert = true; if (!r.kunci) a.__redup = false; return a; });
-      var t = HT.totalRekap(data), tk = {}; data.forEach(function (r) { kol.forEach(function (k) { tk[k.k] = (tk[k.k] || 0) + (r.kol[k.k] || 0); }); });
+      var body = rows.map(function (r, i) { var a = [String(i + 1), r.kode + (r.kunci ? '' : '  (draft)'), String(r.inf.pax), b === 'SB' ? r.kapal : r.p.PIC, U.ribuan(r.inf.harga), U.ribuan(r.penjualan)].concat(kol.map(function (k) { return r.kol[k.k] ? U.ribuan(r.kol[k.k]) : ''; })).concat([U.ribuan(r.pengeluaran), U.ribuan(r.laba), U.ribuan(r.laba), (Math.round(r.margin * 10000) / 100).toFixed(2).replace('.', ',') + '%']); if (r.rugi) a.__alert = true; return a; });
+      var t = HT.totalRekap(rows), tk = {}; rows.forEach(function (r) { kol.forEach(function (k) { tk[k.k] = (tk[k.k] || 0) + (r.kol[k.k] || 0); }); });
       var foot = ['', 'TOTAL', String(t.pax), '', '', U.ribuan(t.penjualan)].concat(kol.map(function (k) { return tk[k.k] ? U.ribuan(tk[k.k]) : ''; })).concat([U.ribuan(t.pengeluaran), U.ribuan(t.laba), U.ribuan(t.laba), (Math.round(t.margin * 10000) / 100).toFixed(2).replace('.', ',') + '%']);
-      var w = [18, 128, 22, 34, 40, 46]; kol.forEach(function () { w.push(34); }); w.push(46, 46, 44, 34);
-      var tot = w.reduce(function (a, b) { return a + b; }, 0), k = p.L / tot;
-      p.tabel(w.map(function (x, i) { return { judul: '', w: x * k, kanan: i > 3 && i !== 1, tengah: i === 0 || i === 2 }; }), body, foot, { head: head, kecil: true });
+      var w = [16, 92, 20, 30, 40, 46]; kol.forEach(function () { w.push(39); }); w.push(46, 46, 46, 32);
+      var tot = w.reduce(function (a, b2) { return a + b2; }, 0), k = p.L / tot;
+      p.tabel(w.map(function (x, i) { return { judul: '', w: x * k, kanan: i > 3 && i !== 1, tengah: i === 0 || i === 2 }; }), body, foot, { head: head, kecil: true, mini: true });
     });
     p.teks('Catatan', 'Baris "(draft)" belum dikunci Finance. Laba rugi hanya memakai rekap yang sudah dikunci.');
     p.selesai('Rekapitulasi ' + judulPeriode);
@@ -418,7 +480,7 @@
     XLSX.writeFile(wb, namaFile(nama) + '.xlsx');
   }
   var WARNA_X = { kO: 'FFFABF8F', kP: 'FFF9CB9C', kH: 'FF76933C', kG: 'FF70AD47', kK: 'FFFFFF00', kM: 'FFFF0000', kW: 'FFFFFFFF', uangH: 'FF76933C' };
-  /** Excel rekap PERSIS template Dummy Rekapitulasi (sama dengan yang ditulis ke Google Sheet). bulanData: [{bulan,label,YB,SB}] */
+  /** Excel rekap mengikuti template Dummy Rekapitulasi (sama dengan yang ditulis ke Google Sheet): judul + satu tabel per tab. bulanData: [HT.dataRekapSheet()] */
   async function excelRekap(nama, bulanData, label) {
     if (!bolehUnduh()) return; await muat(CDN.exceljs);
     var wb = new window.ExcelJS.Workbook(); wb.creator = Store.S.APP_NAMA || 'YukBanyuwangi';
@@ -428,10 +490,10 @@
       t.sel.forEach(function (s) {
         var c = ws.getCell(s.r + 1, s.c + 1);
         c.value = s.f ? { formula: s.f.replace(/^=/, ''), result: s.v } : (s.v === '' ? null : s.v);
-        c.font = { name: 'Calibri', size: s.g === 'judul' ? 28 : 11, bold: /^k|judul/.test(s.g) };
+        c.font = { name: 'Calibri', size: s.g === 'judul' ? 28 : s.g === 'sub' ? 14 : 11, bold: /^k[A-Z]|judul|^sub$/.test(s.g), italic: s.g === 'kosong', color: s.g === 'kosong' ? { argb: 'FF8A9AA5' } : undefined };
         if (WARNA_X[s.g]) c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: WARNA_X[s.g] } };
         if (s.g === 'uang' || s.g === 'uangH') c.numFmt = '#,##0'; if (s.g === 'persen') c.numFmt = '0.00%';
-        c.alignment = { vertical: 'middle', horizontal: /^k|^no$|angka|persen/.test(s.g) ? 'center' : (s.g === 'uang' || s.g === 'uangH' ? 'right' : 'left'), wrapText: /^k/.test(s.g) };
+        c.alignment = { vertical: 'middle', horizontal: /^k[A-Z]|^no$|angka|persen/.test(s.g) ? 'center' : (s.g === 'uang' || s.g === 'uangH' ? 'right' : 'left'), wrapText: /^k[A-Z]/.test(s.g) };
       });
       t.blok.forEach(function (bk) { for (var r = bk[0]; r <= bk[1]; r++) for (var c2 = 0; c2 < t.kolom; c2++) ws.getCell(r + 1, c2 + 1).border = { top: { style: 'thin' }, left: { style: 'thin' }, bottom: { style: 'thin' }, right: { style: 'thin' } }; });
       t.gabung.forEach(function (m) { ws.mergeCells(m[0] + 1, m[1] + 1, m[2] + 1, m[3] + 1); });
@@ -441,5 +503,5 @@
   }
 
   window.Dok = { muat: muat, CDN: CDN, bolehUnduh: bolehUnduh, qrSvg: qrSvg, verifUrl: verifUrl, dataGambar: dataGambar, Kanvas: Kanvas, svgDari: svgDari, pdfDari: pdfDari, pdfBase64: pdfBase64,
-    tataInvoice: tataInvoice, tataManifest: tataManifest, pratinjauKanvas: pratinjauKanvas, laporanRekap: laporanRekap, laporanLabaRugi: laporanLabaRugi, laporanReport: laporanReport, excel: excel, excelRekap: excelRekap, namaFile: namaFile, unduhBlob: unduhBlob };
+    tataInvoice: tataInvoice, tataManifest: tataManifest, pratinjauKanvas: pratinjauKanvas, penampil: penampil, panelHalaman: panelHalaman, laporanRekap: laporanRekap, laporanLabaRugi: laporanLabaRugi, laporanReport: laporanReport, excel: excel, excelRekap: excelRekap, namaFile: namaFile, unduhBlob: unduhBlob };
 })();

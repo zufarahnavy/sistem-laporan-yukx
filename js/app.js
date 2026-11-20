@@ -1,6 +1,6 @@
 /* =====================================================================
-   YukBanyuwangi — app.js : boot tanpa layout shift, halaman masuk (peta
-   kontur), shell (sidebar, topbar, bottom nav), router hash, Cmd/Ctrl+K,
+   YukBanyuwangi — app.js : boot tanpa layout shift, halaman masuk (slideshow
+   gambar diatur Admin), shell (sidebar, topbar, bottom nav), router hash, Cmd/Ctrl+K,
    lonceng tindakan, indikator sinkron Google Sheets, profil.
    ===================================================================== */
 (function () {
@@ -13,6 +13,7 @@
     { id: 'dashboard', label: 'Dashboard', ikon: 'layout-dashboard' },
     { id: 'pesanan', label: 'Data Pemesanan', ikon: 'table-2' },
     { id: 'kalkulasi', label: 'Kalkulasi Budget', ikon: 'calculator' },
+    { id: 'budgettl', label: 'Budgeting TL', ikon: 'wallet-cards' },
     { id: 'manifest', label: 'Manifest Tim Lapang', ikon: 'clipboard-list' },
     { id: 'kalender', label: 'Kalender Trip', ikon: 'calendar-days' },
     { grup: 'Keuangan & laporan' },
@@ -28,26 +29,20 @@
   ];
   var BAWAH = { Admin: ['dashboard', 'pesanan', 'manifest', 'rekap'], Finance: ['dashboard', 'tagihan', 'rekap', 'labarugi'] };
 
-  // Peta kontur halaman masuk — dibangkitkan deterministik (abstraksi lereng Ijen & Raung)
-  function petaKontur() {
-    var s = 7, garis = [];
-    function acak() { s = (s * 16807) % 2147483647; return s / 2147483647; }
-    function cincin(cx, cy, r, amp, fase, n) {
-      var titik = [], k = 64;
-      for (var i = 0; i <= k; i++) {
-        var t = i / k * Math.PI * 2, rr = r * (1 + amp * Math.sin(3 * t + fase) + amp * .6 * Math.sin(5 * t + fase * 1.7) + amp * .35 * Math.cos(2 * t + n));
-        titik.push([cx + rr * Math.cos(t) * 1.18, cy + rr * Math.sin(t) * .86]);
-      }
-      return 'M' + titik.map(function (p) { return p[0].toFixed(1) + ' ' + p[1].toFixed(1); }).join('L') + 'Z';
-    }
-    [[560, 250, 16, 34], [215, 610, 11, 30]].forEach(function (g, gi) {
-      var f = acak() * 6;
-      for (var i = 0; i < g[2]; i++) garis.push({ d: cincin(g[0], g[1], 18 + i * g[3], .05 + i * .006, f + i * .22, gi * 3 + i), sorot: gi === 0 && i === 3 });
-    });
-    return '<svg class="masuk__kontur" viewBox="0 0 800 900" preserveAspectRatio="xMidYMid slice" aria-hidden="true">' +
-      garis.map(function (g, i) { return '<path d="' + g.d + '" pathLength="100" class="' + (g.sorot ? 'sorot' : '') + '" style="--i:' + i + '"/>'; }).join('') +
-      '<path class="rute" d="M-10 860 C 160 790, 260 820, 400 760 S 640 700, 760 742" pathLength="100"/><circle class="pulau" cx="760" cy="742" r="5"/><circle class="kawah" cx="560" cy="250" r="4"/></svg>';
+  // ---------------------------------------------------------------- halaman masuk: data (sebelum login)
+  var KUNCI_LOGIN = ['APP_NAMA', 'APP_TAGLINE', 'LOGO_URL', 'FAVICON_URL', 'PALET', 'FONT_BODY', 'FONT_HEAD', 'PT_WEB', 'LOGIN_JUDUL', 'LOGIN_SUB', 'LOGIN_SLIDE', 'LOGIN_INTERVAL', 'LOGIN_ANIMASI', 'LOGIN_KARTU_JUDUL', 'LOGIN_KARTU_SUB', 'LOGIN_TAUTAN_LABEL', 'LOGIN_TAUTAN_URL', 'LOGIN_BANTUAN'];
+  function setelanMasuk() {
+    var d = {}; KUNCI_LOGIN.forEach(function (k) { d[k] = (YX.PENGATURAN_DEFAULT[k] || [''])[0]; });
+    var simpan = C.LS.get('yb:login', null) || {};
+    return Object.assign(d, simpan, C.DEMO || (Store.S && Store.S.APP_NAMA && Store.me) ? pilihKunci(Store.S || {}) : {});
   }
+  function pilihKunci(S) { var o = {}; KUNCI_LOGIN.forEach(function (k) { if (S[k] !== undefined) o[k] = S[k]; }); return o; }
+  function slideMasuk(S) {
+    var bawaan = YX.LOGIN_SLIDE_DEFAULT, l = U.parseJson(S.LOGIN_SLIDE, null);
+    if (!Array.isArray(l) || !l.length) l = bawaan.map(function (x, i) { return i === 0 ? Object.assign({}, x, { judul: S.LOGIN_JUDUL || x.judul, sub: S.LOGIN_SUB || x.sub }) : x; });
+    return l.slice(0, 8).map(function (x, i) { return { img: x.img || bawaan[i % bawaan.length].img, judul: x.judul || '', sub: x.sub || '' }; });
+  }
+  function tautanSitus(S) { var u = S.LOGIN_TAUTAN_URL || (S.PT_WEB ? 'https://' + String(S.PT_WEB).replace(/^https?:\/\//, '') : ''); return /^https:\/\//.test(u) ? u : ''; }
 
   var App = {
     hal: null, args: [], query: {}, el: null, siap: false,
@@ -57,7 +52,7 @@
       var fontSiap = Promise.race([document.fonts ? document.fonts.ready : Promise.resolve(), C.sleep(1500)]);
       try {
         var sesi = C.LS.get(C.DEMO ? 'yb:sesi:demo' : 'yb:sesi', null);
-        if (C.DEMO) { Store.D = Demo.siapkan(); Store.S = Demo.S(Store.D); Store.info = { waSiap: true, demo: true, sumberOk: true, sumberNama: 'Dummy Database Pemesanan YukX (contoh)', integrasi: Demo.integrasi(), kalender: { id: '' } }; Store.ver = 'demo'; Store.src = 'demo'; }
+        if (C.DEMO) { Store.D = Demo.siapkan(); Store.S = Demo.S(Store.D); Store.info = { waSiap: true, demo: true, rahasia: Demo.rahasia(), penyedia: Store.S.WA_PENYEDIA, sumberOk: true, sumberNama: 'Dummy Database Pemesanan YukX (contoh)', integrasi: Demo.integrasi(), kalender: { id: '' } }; Store.ver = 'demo'; Store.src = 'demo'; }
         if (sesi && sesi.token && (!sesi.exp || sesi.exp > Date.now())) {
           Store.token = sesi.token; Store.me = sesi.me;
           if (C.DEMO) {
@@ -93,38 +88,67 @@
       if (b.success) { Store.setBoot(b.data); C.Tema.terapkan(Store.S); this.segarkan(); }
     },
 
-    // ------------------------------------------------------------ halaman masuk
+    // ------------------------------------------------------------ halaman masuk (slideshow + kartu)
     renderLogin: function (pesan) {
-      var S = Store.S || {}, nama = S.APP_NAMA || 'YukBanyuwangi', app = document.getElementById('app');
-      var logo = S.LOGO_URL || 'assets/logo-yb.png';
-      app.innerHTML = '<div class="masuk">' +
-        '<section class="masuk__peta">' + petaKontur() +
-        '<div class="masuk__merek"><img src="' + esc(logo) + '" alt="" width="44" height="44" onerror="this.src=\'assets/logo-yb.png\'"><span><b>' + esc(nama) + '</b><small>' + esc(S.APP_TAGLINE || 'Trip Operation & Report') + '</small></span></div>' +
-        '<div class="masuk__isi"><h1 class="masuk__judul">' + esc(S.LOGIN_JUDUL || 'Setiap trip tercatat rapi, dari pesanan sampai margin.') + '</h1><p class="masuk__sub">' + esc(S.LOGIN_SUB || '') + '</p></div>' +
-        '<div class="masuk__kaki"><span id="masuk-jam">--.--</span><span id="masuk-tgl"></span><span class="masuk__titik">Kawah Ijen, 8°03′ LS 114°14′ BT</span></div></section>' +
-        '<section class="masuk__panel"><form class="masuk__form" id="form-login" autocomplete="on" novalidate>' +
+      var S = setelanMasuk(), nama = S.APP_NAMA || 'YukBanyuwangi', app = document.getElementById('app'), self = this;
+      var logo = S.LOGO_URL || 'assets/logo-yb.png', situs = tautanSitus(S), ingat = C.LS.get('yb:ingat', '');
+      app.innerHTML = '<div class="masuk2">' +
+        '<div class="masuk2__panggung" id="lg-panggung" aria-hidden="true"></div>' +
+        '<header class="masuk2__atas"><a class="masuk2__merek" href="' + (situs ? esc(situs) : '#') + '" tabindex="-1"><img src="' + esc(logo) + '" alt="" width="40" height="40" onerror="this.src=\'assets/logo-yb.png\'"><span><b>' + esc(nama) + '</b><small>' + esc(S.APP_TAGLINE || '') + '</small></span></a>' +
+        (situs ? '<a class="masuk2__situs" href="' + esc(situs) + '">' + ic('arrow-left', 16) + '<span>' + esc(S.LOGIN_TAUTAN_LABEL || 'Kembali ke situs') + '</span></a>' : '') + '</header>' +
+        '<div class="masuk2__teks" id="lg-teks"></div>' +
+        '<section class="masuk2__kartu"><form class="masuk2__form" id="form-login" autocomplete="on" novalidate>' +
         (C.DEMO ? '<p class="masuk__demo">' + ic('sparkles', 16) + '<span>Mode Demo — data contoh tersimpan di perangkat ini.</span></p>' : '') +
-        '<h2>Masuk</h2><p class="muted">Pakai email kerja dan PIN 6 angka Anda.</p>' +
+        '<div class="masuk2__salam"><h2>' + esc(S.LOGIN_KARTU_JUDUL || 'Selamat datang kembali') + '</h2><p>' + esc(S.LOGIN_KARTU_SUB || '') + '</p></div>' +
         (pesan ? '<div class="note danger">' + ic('circle-alert') + '<span>' + esc(pesan) + '</span></div>' : '') +
-        '<div class="field"><label for="lg-email">Email</label><input class="input input--besar" id="lg-email" type="email" autocomplete="username" required placeholder="nama@yukbanyuwangi.co.id"></div>' +
-        '<div class="field"><label for="pin-0">PIN</label><div class="pin-boxes" id="pin">' + [0, 1, 2, 3, 4, 5].map(function (i) { return '<input id="pin-' + i + '" inputmode="numeric" pattern="[0-9]*" maxlength="1" type="password" aria-label="Digit PIN ' + (i + 1) + '" autocomplete="' + (i ? 'off' : 'current-password') + '">'; }).join('') + '</div></div>' +
-        '<button class="btn btn--primary btn--block btn--besar" type="submit" id="lg-btn"><span>Masuk</span></button>' +
-        (C.DEMO ? '<div class="masuk__akun"><span class="muted">Coba sebagai (PIN 123456)</span><div><button type="button" data-demo="admin@yukbanyuwangi.demo">' + UI.avatar('Nadia Putri', '', 'sm') + '<span><b>Nadia</b><small>Admin</small></span></button><button type="button" data-demo="finance@yukbanyuwangi.demo">' + UI.avatar('Laras Wening', '', 'sm') + '<span><b>Laras</b><small>Finance</small></span></button></div></div>'
-          : '<p class="masuk__bantu muted">Lupa PIN? Minta Admin pengelola mengatur ulang dari menu Pengaturan.</p>') +
+        '<div class="field"><label for="lg-email">Email</label><input class="input input--besar" id="lg-email" type="email" autocomplete="username" required placeholder="nama@yukbanyuwangi.co.id" value="' + esc(ingat) + '"></div>' +
+        '<div class="field"><label for="lg-pin">PIN</label><div class="masuk2__pin"><input class="input input--besar" id="lg-pin" type="password" inputmode="numeric" pattern="[0-9]*" maxlength="6" autocomplete="current-password" required placeholder="6 angka"><button type="button" class="masuk2__mata" id="lg-mata" aria-label="Tampilkan PIN" aria-pressed="false">' + ic('eye', 20) + '</button></div></div>' +
+        '<div class="masuk2__baris"><label class="check"><input type="checkbox" id="lg-ingat"' + (ingat ? ' checked' : '') + '><span>Ingat email saya</span></label><button type="button" class="link-btn" id="lg-lupa">Lupa PIN?</button></div>' +
+        '<button class="btn btn--besar btn--block masuk2__tombol" type="submit" id="lg-btn"><span>Masuk</span></button>' +
+        (C.DEMO ? '<div class="masuk__akun"><span class="muted">Coba sebagai (PIN 123456)</span><div><button type="button" data-demo="admin@yukbanyuwangi.demo">' + UI.avatar('Nadia Putri', '', 'sm') + '<span><b>Nadia</b><small>Admin</small></span></button><button type="button" data-demo="finance@yukbanyuwangi.demo">' + UI.avatar('Laras Wening', '', 'sm') + '<span><b>Laras</b><small>Finance</small></span></button></div></div>' : '') +
+        '<p class="masuk2__bantu">' + esc(S.LOGIN_BANTUAN || '') + '</p>' +
         '</form></section></div>';
-      var jam = function () { var n = new Date(Date.now() + 7 * 3600e3), j = document.getElementById('masuk-jam'), t = document.getElementById('masuk-tgl'); if (!j) { clearInterval(App._jam); return; } j.textContent = String(n.getUTCHours()).padStart(2, '0') + '.' + String(n.getUTCMinutes()).padStart(2, '0') + ' WIB'; t.textContent = ['Minggu', 'Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu'][n.getUTCDay()] + ', ' + U.tglPanjang(n.toISOString().slice(0, 10)); };
-      jam(); clearInterval(this._jam); this._jam = setInterval(jam, 15000);
-      var pins = Array.from(app.querySelectorAll('#pin input'));
-      pins.forEach(function (p, i) {
-        p.addEventListener('input', function () { p.value = p.value.replace(/\D/g, '').slice(-1); if (p.value && pins[i + 1]) pins[i + 1].focus(); if (pins.every(function (x) { return x.value; })) app.querySelector('#form-login').requestSubmit(); });
-        p.addEventListener('keydown', function (e) { if (e.key === 'Backspace' && !p.value && pins[i - 1]) pins[i - 1].focus(); });
-        p.addEventListener('paste', function (e) { var t = (e.clipboardData.getData('text') || '').replace(/\D/g, '').slice(0, 6); if (t.length) { e.preventDefault(); t.split('').forEach(function (c, j) { if (pins[j]) pins[j].value = c; }); (pins[t.length] || pins[5]).focus(); if (t.length === 6) app.querySelector('#form-login').requestSubmit(); } });
-      });
-      app.querySelectorAll('[data-demo]').forEach(function (b) { b.onclick = function () { app.querySelector('#lg-email').value = b.dataset.demo; '123456'.split('').forEach(function (c, j) { pins[j].value = c; }); app.querySelector('#form-login').requestSubmit(); }; });
-      var self = this;
-      app.querySelector('#form-login').onsubmit = function (e) { e.preventDefault(); self.masuk(app.querySelector('#lg-email').value, pins.map(function (p) { return p.value; }).join(''), app.querySelector('#lg-btn'), pins); };
-      if (!C.DEMO) fetch(C.CFG.GAS_URL + '?w=pub', { mode: 'no-cors', cache: 'no-store' }).catch(function () { });
-      setTimeout(function () { var e = app.querySelector('#lg-email'); if (e && window.innerWidth > 720) e.focus(); }, 300);
+      this.slideMasuk(S);
+      var pin = app.querySelector('#lg-pin'), form = app.querySelector('#form-login');
+      pin.addEventListener('input', function () { pin.value = pin.value.replace(/\D/g, '').slice(0, 6); });
+      app.querySelector('#lg-mata').onclick = function () { var lihat = pin.type === 'password'; pin.type = lihat ? 'text' : 'password'; this.setAttribute('aria-pressed', String(lihat)); this.setAttribute('aria-label', lihat ? 'Sembunyikan PIN' : 'Tampilkan PIN'); this.innerHTML = ic(lihat ? 'eye-off' : 'eye', 20); pin.focus(); };
+      app.querySelector('#lg-lupa').onclick = function () { UI.modal({ judul: 'Lupa PIN?', ukuran: 'sm', isi: '<p>PIN diatur ulang oleh <b>Admin pengelola</b> lewat <b>Pengaturan → Pengguna → Reset PIN</b>. PIN baru tampil sekali di layar Admin — minta langsung kepadanya, lalu ganti lewat menu Profil setelah masuk.</p>', aksi: [{ label: 'Mengerti', kelas: 'btn--primary' }] }); };
+      app.querySelectorAll('[data-demo]').forEach(function (b) { b.onclick = function () { app.querySelector('#lg-email').value = b.dataset.demo; pin.value = '123456'; form.requestSubmit(); }; });
+      form.onsubmit = function (e) {
+        e.preventDefault(); var em = app.querySelector('#lg-email').value;
+        try { if (app.querySelector('#lg-ingat').checked) C.LS.set('yb:ingat', em.trim()); else C.LS.del('yb:ingat'); } catch (er) { }
+        self.masuk(em, pin.value, app.querySelector('#lg-btn'), [pin]);
+      };
+      if (!C.DEMO) {
+        fetch(C.CFG.GAS_URL + '?w=pub', { mode: 'no-cors', cache: 'no-store' }).catch(function () { });
+        C.api('login.info', {}, { senyap: true, tries: 1 }).then(function (r) {
+          if (!r || !r.success || !r.data || !r.data.S) return;
+          var lama = JSON.stringify(pilihKunci(setelanMasuk())); C.LS.set('yb:login', r.data.S);
+          if (JSON.stringify(pilihKunci(Object.assign(setelanMasuk(), r.data.S))) !== lama && document.getElementById('lg-panggung') && !Store.me) { C.Tema.terapkan(r.data.S, false); self.renderLogin(pesan); }
+        });
+      }
+      setTimeout(function () { var e = app.querySelector(ingat ? '#lg-pin' : '#lg-email'); if (e && window.innerWidth > 860) e.focus(); }, 300);
+    },
+    /** Slideshow halaman masuk: gambar bergerak pelan (zoom & geser), teks per slide, indikator klik. */
+    slideMasuk: function (S) {
+      var box = document.getElementById('lg-panggung'), teks = document.getElementById('lg-teks'); if (!box) return;
+      var l = slideMasuk(S), n = l.length, i = 0, det = Math.max(3, Math.min(30, Number(S.LOGIN_INTERVAL) || 6)), gerak = S.LOGIN_ANIMASI !== 'TIDAK' && !matchMedia('(prefers-reduced-motion: reduce)').matches;
+      box.style.setProperty('--durasi', (det + 1.6) + 's'); box.classList.toggle('diam', !gerak);
+      box.innerHTML = l.map(function (x, j) { return '<div class="masuk2__gambar' + (j === 0 ? ' on' : '') + ' arah' + (j % 4) + '"><img src="' + esc(x.img) + '" alt="" decoding="async"' + (j ? ' loading="lazy"' : '') + ' onerror="this.parentNode.classList.add(\'galat\')"></div>'; }).join('') + '<div class="masuk2__redup"></div>';
+      teks.innerHTML = '<div class="masuk2__judul-wrap" aria-live="polite"><h1 class="masuk2__judul" id="lg-judul"></h1><p class="masuk2__sub" id="lg-sub"></p></div>' +
+        (n > 1 ? '<div class="masuk2__titik" role="tablist" aria-label="Pilih gambar">' + l.map(function (x, j) { return '<button type="button" role="tab" data-s="' + j + '" aria-label="Gambar ' + (j + 1) + '" aria-selected="' + (j === 0) + '"><i></i></button>'; }).join('') + '</div>' : '');
+      teks.style.setProperty('--durasi', det + 's');
+      function tampil(j) {
+        i = (j + n) % n;
+        box.querySelectorAll('.masuk2__gambar').forEach(function (g, x) { g.classList.toggle('on', x === i); if (x === i && gerak) { g.classList.remove('main'); void g.offsetWidth; g.classList.add('main'); } });
+        var wrap = teks.querySelector('.masuk2__judul-wrap'); wrap.classList.remove('ganti'); void wrap.offsetWidth; wrap.classList.add('ganti');
+        teks.querySelector('#lg-judul').textContent = l[i].judul; teks.querySelector('#lg-sub').textContent = l[i].sub;
+        teks.querySelectorAll('[data-s]').forEach(function (b, x) { b.setAttribute('aria-selected', String(x === i)); b.classList.remove('jalan'); if (x === i) { void b.offsetWidth; b.classList.add('jalan'); } });
+      }
+      teks.onclick = function (e) { var b = e.target.closest('[data-s]'); if (!b) return; tampil(+b.dataset.s); mulai(); };
+      clearInterval(App._slide);
+      function mulai() { clearInterval(App._slide); if (n > 1) App._slide = setInterval(function () { if (!document.getElementById('lg-panggung')) { clearInterval(App._slide); return; } if (!document.hidden) tampil(i + 1); }, det * 1000); }
+      tampil(0); mulai();
     },
     masuk: async function (email, pin, btn, pins) {
       if (btn.classList.contains('loading')) return;
@@ -134,14 +158,14 @@
       var r = await C.api('auth.login', { email: email.trim(), pin: pin });
       if (!r.success) {
         btn.classList.remove('loading'); btn.innerHTML = label; UI.toast(r.message, 'err');
-        var box = document.getElementById('pin'); box.classList.remove('shake'); void box.offsetWidth; box.classList.add('shake'); pins.forEach(function (p) { p.value = ''; }); pins[0].focus(); return;
+        var box = pins[0].closest('.masuk2__pin') || pins[0]; box.classList.remove('shake'); void box.offsetWidth; box.classList.add('shake'); pins.forEach(function (p) { p.value = ''; }); pins[0].focus(); return;
       }
       btn.innerHTML = UI.putar(18) + '<span>Menyiapkan data…</span>';
       Store.token = r.data.token; Store.me = r.data.me;
       C.LS.set(C.DEMO ? 'yb:sesi:demo' : 'yb:sesi', { token: r.data.token, me: r.data.me, exp: Date.now() + 12 * 3600e3 });
       if (r.data.boot) Store.setBoot(r.data.boot);
       else if (!C.DEMO) { var b = await C.api('boot', {}); if (!b.success) { UI.toast(b.message, 'err'); btn.classList.remove('loading'); btn.innerHTML = label; return; } Store.setBoot(b.data); }
-      C.Tema.terapkan(Store.S); clearInterval(this._jam);
+      C.Tema.terapkan(Store.S); clearInterval(this._slide); try { C.LS.set('yb:login', pilihKunci(Store.S)); } catch (e) { }
       var app = document.getElementById('app'); app.classList.remove('ready');
       setTimeout(function () { App.renderShell(); if (!location.hash || location.hash === '#/') location.hash = '#/dashboard'; App.route(true); app.classList.add('ready'); UI.toast(r.message || 'Berhasil masuk.', 'ok'); }, 180);
     },
@@ -210,6 +234,7 @@
         var ix = HT.indeks(D);
         n.manifest = D.Pesanan.filter(function (p) { var i = HT.infoPesanan(p, S), h = i.mulai ? U.selisihHari(today, i.mulai) : -1, m = ix.mnf[p.ID_Pesanan]; return h >= 0 && h <= 7 && (!m || m.Status !== 'Terbit'); }).length;
         n.kalkulasi = D.Pesanan.filter(function (p) { var i = HT.infoPesanan(p, S), h = i.mulai ? U.selisihHari(today, i.mulai) : -1; return h >= 0 && h <= 14 && !ix.kal[p.ID_Pesanan]; }).length;
+        n.budgettl = D.Pesanan.filter(function (p) { var i = HT.infoPesanan(p, S), h = i.mulai ? U.selisihHari(today, i.mulai) : -1, m = ix.mnf[p.ID_Pesanan]; return h >= 0 && h <= 7 && !(m && m.Status === 'Terbit') && !HT.budgetTL(ix, p.ID_Pesanan).ada; }).length;
       }
       n.wa = (D.AntrianNotif || []).filter(function (r) { return r.Status === 'Gagal'; }).length;
       return n;
@@ -404,21 +429,22 @@
       return '<div class="psn-kartu"><div class="psn-kartu__ava ' + (i.bagian === 'SB' ? 'sb' : '') + '">' + ic(i.bagian === 'SB' ? 'sailboat' : 'mountain', 22) + '</div><div class="row__text"><b class="truncate" style="display:block;font-size:16px">' + esc(p.Nama) + '</b><small class="muted truncate" style="display:block">' + esc(p.Trip) + '</small></div><div class="psn-kartu__meta">' +
         '<span>' + ic('calendar-days', 15) + esc(i.jadwal) + '</span><span>' + ic('users', 15) + i.pax + ' pax</span><span>' + ic('table-2', 15) + esc(p.Tab) + '</span>' + UI.badge(st) + (ekstra || '') + '</div></div>';
     },
-    /** Alur satu pesanan: data → kalkulasi → manifest → calendar → rekap (urutan kerja nyata). */
+    /** Alur satu pesanan: data → kalkulasi → budgeting TL → manifest → calendar → rekap (urutan kerja nyata). */
     alur: function (p) {
       var D = Store.D, S = Store.S, today = U.hariIni(), ix = HT.indeks(D), id = p.ID_Pesanan;
-      var k = HT.ringkasKalkulasi(ix, id), m = ix.mnf[id], ev = ix.evt[id], r = HT.rekapPesanan(D, ix, p, S, today), inf = r.inf;
+      var k = HT.ringkasKalkulasi(ix, id), bt = HT.budgetTL(ix, id), m = ix.mnf[id], ev = ix.evt[id], r = HT.rekapPesanan(D, ix, p, S, today), inf = r.inf;
       var undang = m ? (U.parseJson(m.Diundang, []) || []).length : 0;
       return [
         { t: 'Data pesanan', s: 'ok', sub: p.Tab, go: 'pesanan/' + id },
-        { t: 'Kalkulasi', s: k.ada ? 'ok' : 'now', sub: k.ada ? U.rpRingkas(k.total) + ' · TL ' + U.rpRingkas(k.totalTL) : 'Belum dibuat', go: 'kalkulasi/' + id },
-        { t: 'Manifest', s: m && m.Status === 'Terbit' ? 'ok' : m && m.Status === 'Berubah' ? 'bad' : k.ada ? 'now' : '', sub: m ? (m.Status === 'Terbit' ? 'v' + m.Versi + ' terbit' : m.Status === 'Berubah' ? 'Perlu terbit ulang' : 'Draft') : 'Belum dibuat', go: 'manifest/' + id },
+        { t: 'Kalkulasi', s: k.ada ? 'ok' : 'now', sub: k.ada ? 'RAB ' + U.rpRingkas(k.total) : 'Belum dibuat', go: 'kalkulasi/' + id },
+        { t: 'Budgeting TL', s: bt.ada ? (bt.tersimpan ? 'ok' : 'now') : k.ada ? 'now' : '', sub: bt.ada ? U.rpRingkas(bt.terima) + ' ke TL' + (bt.tersimpan ? '' : ' · cek') : 'Belum diisi', go: 'budgettl/' + id },
+        { t: 'Manifest', s: m && m.Status === 'Terbit' ? 'ok' : m && m.Status === 'Berubah' ? 'bad' : bt.ada ? 'now' : '', sub: m ? (m.Status === 'Terbit' ? 'v' + m.Versi + ' terbit' : m.Status === 'Berubah' ? 'Perlu terbit ulang' : 'Draft') : 'Belum dibuat', go: 'manifest/' + id },
         { t: 'Calendar', s: !inf.mulai ? '' : ev && ev.Status === 'Gagal' ? 'bad' : ev && ev.Status === 'OK' ? 'ok' : '', sub: !inf.mulai ? 'Tanpa tanggal' : ev ? (ev.Status === 'OK' ? (ev.Lampiran ? 'PDF terlampir' : 'Event dibuat') + (undang ? ' · ' + undang + ' TL' : '') : ev.Pesan || ev.Status) : 'Menunggu sinkron', go: 'kalender?bulan=' + (inf.bulan || '') },
         { t: 'Rekap', s: r.kunci ? 'ok' : r.status === 'Siap Dicek' ? 'now' : '', sub: r.kunci ? 'Margin dikunci' : r.status === 'Siap Dicek' ? 'Menunggu Finance' : r.selesai ? 'Lengkapi & ajukan' : 'Setelah trip', go: 'rekap?bulan=' + (inf.bulan || '') + '&id=' + id }
       ];
     },
     alurHTML: function (p, kecil) {
-      return '<ol class="steps steps--5' + (kecil ? ' steps--kecil' : '') + '">' + this.alur(p).map(function (s, i) {
+      return '<ol class="steps steps--6' + (kecil ? ' steps--kecil' : '') + '">' + this.alur(p).map(function (s, i) {
         return '<li class="' + s.s + '" data-go="' + esc(s.go) + '" role="link" tabindex="0"><span class="steps__dot">' + (s.s === 'ok' ? ic('check', 13) : s.s === 'bad' ? '!' : i + 1) + '</span><b>' + esc(s.t) + '</b><small>' + esc(s.sub) + '</small></li>';
       }).join('') + '</ol>';
     },

@@ -46,7 +46,7 @@
           var tx = new YX.Tx(H, me2); tx.log('Login', 'Sistem', u.ID_Pengguna, 'Mode Demo · ' + navigator.userAgent.split(') ')[0].split('(').pop());
           return YX.ok({ token: 'demo.' + u.ID_Pengguna, me: me2 }, 'Selamat datang, ' + u.Nama.split(' ')[0] + '!');
         }
-        case 'boot': return YX.ok({ D: D, S: this.S(D), ver: 'demo', src: 'demo', info: { waSiap: true, emailSisa: 100, demo: true, sumberOk: true, sumberNama: 'Dummy Database Pemesanan YukX (contoh)', integrasi: this.integrasi(), kalender: { id: '' } } });
+        case 'boot': return YX.ok({ D: D, S: this.S(D), ver: 'demo', src: 'demo', info: { waSiap: true, emailSisa: 100, demo: true, rahasia: this.rahasia(), penyedia: this.S(D).WA_PENYEDIA, sumberOk: true, sumberNama: 'Dummy Database Pemesanan YukX (contoh)', integrasi: this.integrasi(), kalender: { id: '' } } });
         case 'ping': return YX.ok({ ver: 'demo', src: 'demo' });
         case 'sumber.tarik': await jeda(300); return YX.ok({ src: 'demo', ok: true, Pesanan: [], hapus: [], Sumber_Tab: D.Sumber_Tab });
         case 'sumber.info': await jeda(250); return YX.ok({ pesanan: { nama: 'Dummy Database Pemesanan YukX', ok: true, samar: '1Dem••••••Pes0', diubah: YX.util.nowIso() }, rekap: C.LS.get('yb:demo:rekap', true) ? { nama: 'Dummy Rekapitulasi Trip', ok: true, samar: '1Dem••••••Rek0' } : null, trigger: true, tab: D.Sumber_Tab });
@@ -87,8 +87,9 @@
             for (var i = 0; i < list.length; i++) {
               var k = list[i]; await jeda(380 + Math.random() * 380);
               var tx2 = new YX.Tx(H, me), dat = {};
-              if (k.Jenis === 'KAL_SINKRON') dat = { hasil: (k.events || []).map(function (e) { return { id: e.id, eventId: e.eventId || 'yb' + YX.util.hashTeks(e.id) + 'demo', hash: e.hash, ok: true, pesan: 'Tersinkron (simulasi)', lampiran: e.lampiran ? e.lampiran.fileId : '', tamu: e.tamu }; }), hapus: (k.hapus || []).map(function (x) { return x.id; }), sisa: k.sisa };
-              YX.selesaikanTugas(tx2, k.ID_Tugas, { ok: true, pesan: k.Jenis === 'REKAP_SHEET' ? 'Rekap ' + (k.bulan || []).map(function (b) { return b.label; }).join(', ') + ' ditulis (simulasi)' : 'OK (simulasi demo)', data: dat });
+              if (k.Jenis === 'QONTAK_SYNC') dat = { hasil: (k.kontak || []).map(function (x) { return { id: x.id, ok: true, qid: x.qid || 'QDEMO' + YX.util.hashTeks(x.id).slice(0, 6), hash: x.hash, pesan: (x.qid ? 'Diperbarui' : 'Dibuat') + ' di Qontak (simulasi)' }; }), sisa: k.sisa };
+              else if (k.Jenis === 'KAL_SINKRON') dat = { hasil: (k.events || []).map(function (e) { return { id: e.id, eventId: e.eventId || 'yb' + YX.util.hashTeks(e.id) + 'demo', hash: e.hash, ok: true, pesan: 'Tersinkron (simulasi)', lampiran: e.lampiran ? e.lampiran.fileId : '', tamu: e.tamu }; }), hapus: (k.hapus || []).map(function (x) { return x.id; }), sisa: k.sisa };
+              YX.selesaikanTugas(tx2, k.ID_Tugas, { ok: true, pesan: k.Jenis === 'QONTAK_SYNC' ? ((k.kontak || []).length + ' kontak dikirim ke Qontak (simulasi)') : k.Jenis === 'REKAP_SHEET' ? 'Rekap ' + (k.bulan || []).map(function (b) { return b.label; }).join(', ') + ' ditulis (simulasi)' : 'OK (simulasi demo)', data: dat });
               var h2 = tx2.hasil(); this.gabung(res, h2); C.Store.terapkan(h2); App.segarkan(); total++;
             }
           }
@@ -110,9 +111,26 @@
           return YX.ok({ peta: p }, Object.keys(p).length + ' nomor dicek (simulasi).');
         }
         case 'wa.device': await jeda(300); return YX.ok({ device: '6281211110001', status: 'connect', paket: 'Demo (simulasi)', kuota: 'tanpa batas', expired: '-' });
-        case 'wa.tes': await jeda(400); return YX.ok(null, 'Pesan tes terkirim ke ' + d.nomor + ' (simulasi).');
+        case 'wa.tes': { await jeda(400); var Sw = this.S(D), pw = Sw.WA_PENYEDIA || 'fonnte', tw = (YX.util.parseJson(Sw.WA_TEMPLATE, {}) || {})[d.event || 'BLAST'] || {};
+          if (pw !== 'fonnte' && !(pw === 'qontak' ? tw.id : tw.nama)) return YX.fail('Template untuk "' + ((YX.NOTIF_EVENTS[d.event] || {}).label || 'Blast') + '" belum dipasang di tabel template.');
+          return YX.ok(null, pw === 'fonnte' ? 'Pesan tes terkirim ke ' + d.nomor + ' (simulasi Fonnte).' : 'Template "' + (tw.nama || tw.id) + '" terkirim ke ' + d.nomor + ' lewat ' + (pw === 'meta' ? 'Meta Cloud API' : 'Qontak') + ' (simulasi).'); }
+        case 'login.info': return YX.ok({ S: this.S(D), v: YX.VERSI });
+        case 'wa.statusApi': { await jeda(450); var Ss = this.S(D);
+          if (Ss.WA_PENYEDIA === 'meta') return YX.ok({ nomor: '+62 812-1111-0001', nama: 'YukBanyuwangi', kualitas: 'GREEN' }, 'Terhubung · YukBanyuwangi · +62 812-1111-0001 · kualitas GREEN (simulasi)');
+          if (Ss.WA_PENYEDIA === 'qontak') return YX.ok({ kanal: [{ id: 'a1b2c3d4-demo-0001', nama: '6281211110001 · YukBanyuwangi', status: 'aktif' }, { id: 'a1b2c3d4-demo-0002', nama: '6281211110002 · CS Trip', status: 'aktif' }] }, 'Terhubung · 2 nomor WhatsApp di Qontak (simulasi)');
+          return YX.ok({ device: '6281211110001', status: 'connect' }, 'Perangkat 6281211110001 · connect (simulasi)'); }
+        case 'wa.templateApi': { await jeda(500); var St = this.S(D), pt = St.WA_PENYEDIA;
+          if (pt !== 'meta' && pt !== 'qontak') return YX.fail('Daftar template hanya untuk Meta Cloud API atau Qontak.');
+          var contoh = [['invoice_terbit', 'id', 4, true], ['pengingat_tagihan', 'id', 4], ['pembayaran_diterima', 'id', 3], ['info_tim_lapang', 'id', 4], ['manifest_terbit', 'id', 3], ['promo_trip', 'id', 2]];
+          return YX.ok({ penyedia: pt, daftar: contoh.map(function (c, i) { return { id: pt === 'qontak' ? 'b7d1e0a2-demo-000' + (i + 1) : c[0], nama: c[0], bahasa: c[1], status: 'APPROVED', kategori: i === 5 ? 'MARKETING' : 'UTILITY', param: c[2], dokumen: !!c[3], teks: '' }; }) }); }
+        case 'qontak.tes': { await jeda(400); var Sq = this.S(D), rq = this.rahasia();
+          if (!rq.MEKARI_CLIENT_ID.ada || !rq.MEKARI_CLIENT_SECRET.ada) return YX.fail('Isi Client ID & Client Secret Mekari.');
+          return YX.ok(null, 'Terhubung ke Qontak CRM · ' + String(Sq.QONTAK_URL_KONTAK || '').replace(/^https:\/\//, '') + ' (simulasi)'); }
         case 'email.tes': await jeda(400); return YX.ok(null, 'Email tes terkirim ke ' + d.email + ' (simulasi).');
-        case 'rahasia.simpan': await jeda(250); C.LS.set('yb:demo:token', d.nilai === '__HAPUS__' ? '' : String(d.nilai || '').slice(0, 4) + '••••••'); return YX.ok({ ada: d.nilai !== '__HAPUS__', samar: C.LS.get('yb:demo:token', '') }, 'Token tersimpan (demo: hanya versi tersamar).');
+        case 'rahasia.simpan': { await jeda(250); var rh = C.LS.get('yb:demo:rahasia', {}) || {}, hapus = d.nilai === '__HAPUS__';
+          if (!/^(FONNTE_TOKEN|META_TOKEN|MEKARI_CLIENT_ID|MEKARI_CLIENT_SECRET)$/.test(d.kunci || 'FONNTE_TOKEN')) return YX.fail('Kunci rahasia tidak diizinkan.');
+          rh[d.kunci || 'FONNTE_TOKEN'] = hapus ? '' : String(d.nilai || '').slice(0, 4) + '••••••'; C.LS.set('yb:demo:rahasia', rh);
+          return YX.ok({ ada: !hapus, samar: rh[d.kunci || 'FONNTE_TOKEN'] }, hapus ? 'Kunci dihapus (demo).' : 'Kunci tersimpan (demo: hanya versi tersamar yang diingat).'); }
         case 'aset.unggah': case 'bukti.unggah': await jeda(300); return YX.ok({ url: 'data:' + d.file.mime + ';base64,' + d.file.b64 }, 'Gambar tersimpan.');
         case 'sistem.status': return YX.ok(this.integrasi());
         case 'verifikasi.publik': return YX.hitung.verifikasiPublik(D, d.k);
@@ -124,9 +142,11 @@
       }
     },
     gabung: function (res, h) { Object.keys(h.changes || {}).forEach(function (t) { res.changes[t] = (res.changes[t] || []).concat(h.changes[t]); }); },
+    rahasia: function () { var rh = C.LS.get('yb:demo:rahasia', {}) || {}, o = {}; ['FONNTE_TOKEN', 'META_TOKEN', 'MEKARI_CLIENT_ID', 'MEKARI_CLIENT_SECRET'].forEach(function (k) { o[k] = { ada: k === 'FONNTE_TOKEN' ? rh[k] !== '' : !!rh[k], samar: rh[k] == null && k === 'FONNTE_TOKEN' ? 'demo••••••' : rh[k] || '' }; }); return o; },
     integrasi: function () {
       return { sumber: { ok: true, info: '"Dummy Database Pemesanan YukX" · simulasi' }, rekap: { ok: true, info: '"Dummy Rekapitulasi Trip" · simulasi' }, sheets: { ok: true, info: 'Mode Demo — data di perangkat ini' }, drive: { ok: true, info: 'Simulasi folder Manifest & Invoice' }, calendar: { ok: true, info: 'Simulasi kalender "YukBanyuwangi Trips"' },
-        gmail: { ok: true, info: 'Kuota simulasi 100/hari' }, fonnte: { ok: true, info: 'Perangkat simulasi terhubung' }, demo: true, versi: YX.VERSI };
+        gmail: { ok: true, info: 'Kuota simulasi 100/hari' }, wa: { ok: true, info: ({ fonnte: 'Fonnte', meta: 'Meta Cloud API', qontak: 'Qontak' })[this.S(C.Store.D || { Pengaturan: [] }).WA_PENYEDIA] + ' · simulasi' },
+        qontak: (function (S) { return S.QONTAK_KONTAK_AKTIF === 'YA' ? { ok: true, info: 'Sinkron kontak aktif · simulasi' } : { ok: false, mati: true, info: 'Sinkron kontak Qontak belum diaktifkan' }; })(this.S(C.Store.D || { Pengaturan: [] })), demo: true, versi: YX.VERSI };
     }
   };
   window.Demo = Demo;

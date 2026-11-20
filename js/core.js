@@ -125,6 +125,7 @@
       },
       now: function () { return new Date(); }, uuid: uuid,
       hash: function (pin, salt) { return sha256(salt + ':' + pin); },
+      demo: DEMO,
       waSiap: function () { return DEMO ? true : !!Store.info.waSiap; },
       sisaEmail: function () { return 100; }
     };
@@ -133,7 +134,7 @@
   // ---------------------------------------------------------------- API
   var Perf = { rows: [], add: function (a, t, s) { this.rows.push({ aksi: a, total: t, server: s == null ? null : s, net: s == null ? null : t - s }); if (this.rows.length > 120) this.rows.shift(); }, table: function () { console.table(this.rows.slice(-30)); } };
   window.Perf = Perf;
-  var BACA = /^(boot|ping|verifikasi\.publik|sistem\.status|sumber\.(tarik|info)|kalkulasi\.baca|itinerary\.baca|aset\.data|wa\.audiens|wa\.device)$/;
+  var BACA = /^(boot|ping|verifikasi\.publik|sistem\.status|sumber\.(tarik|info)|kalkulasi\.baca|itinerary\.baca|aset\.data|wa\.audiens|wa\.device|wa\.statusApi|wa\.templateApi|qontak\.tes|login\.info)$/;
 
   async function apiOnce(action, data, timeout, reqId) {
     var ctrl = new AbortController(), timer = setTimeout(function () { ctrl.abort(); }, timeout), t0 = performance.now();
@@ -171,8 +172,8 @@
     rantai = p.catch(function () { });
     return p;
   }
-  var TANPA_OPTIMIS = /^(pengguna\.|wa\.|notif\.|crm\.sync)/;
-  var LABEL_PROSES = { pesanan: 'Menyimpan ke Google Sheets', kalkulasi: 'Menyimpan kalkulasi', paket: 'Menyimpan paket', manifest: 'Menyimpan manifest', rekap: 'Memperbarui rekap', bayar: 'Mencatat pembayaran', tagihan: 'Memperbarui tagihan',
+  var TANPA_OPTIMIS = /^(pengguna\.|wa\.|notif\.|crm\.sync|qontak\.)/;
+  var LABEL_PROSES = { pesanan: 'Menyimpan ke Google Sheets', kalkulasi: 'Menyimpan kalkulasi', budgettl: 'Menyimpan budgeting Tim Lapang', qontak: 'Menyiapkan sinkron Qontak', paket: 'Menyimpan paket', manifest: 'Menyimpan manifest', rekap: 'Memperbarui rekap', bayar: 'Mencatat pembayaran', tagihan: 'Memperbarui tagihan',
     invoice: 'Menyimpan invoice', tl: 'Menyimpan Tim Lapang', biaya: 'Menyimpan biaya operasional', pengaturan: 'Menyimpan pengaturan', pengguna: 'Menyimpan pengguna', crm: 'Memperbarui CRM', wa: 'Memproses WhatsApp', notif: 'Memproses notifikasi' };
   async function aksiJalan(action, data, opt) {
     var btn = opt.btn, label, pil = opt.diamProses ? null : UI.proses(opt.proses || LABEL_PROSES[action.split('.')[0]] || 'Memproses', /\.hapus$|\.batal$/.test(action) ? 'hapus' : '');

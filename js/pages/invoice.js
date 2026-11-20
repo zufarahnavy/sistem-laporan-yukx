@@ -59,7 +59,7 @@
     var box = el.querySelector('#iv-kertas'); if (!box || !st.f) return;
     var t = ++token, k = await Dok.tataInvoice(vDari(st.f));
     if (t !== token || !box.isConnected) return;
-    box.innerHTML = Dok.svgDari(k).map(function (s) { return '<div class="kertas">' + s + '</div>'; }).join('');
+    var v = vDari(st.f); Dok.panelHalaman(box, k, { judul: (st.f.Judul || 'Invoice') + ' ' + (st.f.No_Invoice || ''), nama: 'Invoice_' + String(st.f.Judul || 'Invoice').replace(/[^\w]+/g, '_') + '_No._' + (st.f.No_Invoice || ''), sub: 'Pratinjau dari isian saat ini · ' + (v && v.p ? v.p.Nama : '') });
   }
   var pratinjauNanti = C.debounce(pratinjau, 320);
   function payload() { var f = st.f; return { ID_Invoice: f.ID_Invoice, ID_Pesanan: f.ID_Pesanan, No_Invoice: String(f.No_Invoice || '').trim(), Customer_ID: String(f.Customer_ID || '').trim(), Judul: f.Judul, Tanggal: f.Tanggal, Bill_To: f.Bill_To, Item: f.Item, Disc: f.Disc, DP: f.DP, Note_Judul: f.Note_Judul, Note_Isi: f.Note_Isi }; }
@@ -139,7 +139,7 @@
         '<div class="form" style="margin-top:16px"><div class="field"><label for="iv-disc">Disc</label><div class="input-group"><span class="addon">Rp</span><input class="input num" id="iv-disc" data-f="Disc" data-uang inputmode="numeric" value="' + (f.Disc ? Number(f.Disc).toLocaleString('id-ID') : '') + '"' + (ro ? ' disabled' : '') + '></div></div>' +
         '<div class="field"><label for="iv-dp">DP</label><div class="input-group"><span class="addon">Rp</span><input class="input num" id="iv-dp" data-f="DP" data-uang inputmode="numeric" value="' + (f.DP ? Number(f.DP).toLocaleString('id-ID') : '') + '"' + (ro ? ' disabled' : '') + '></div></div></div><div id="iv-total" style="margin-top:12px">' + totalHTML(f) + '</div></section>' +
         '<section class="card"><h2 class="card-h">Note</h2><div class="form"><div class="field"><label for="iv-nj">Judul note</label><input class="input" id="iv-nj" data-f="Note_Judul" value="' + esc(f.Note_Judul) + '"' + (ro ? ' disabled' : '') + '></div><div class="field"><label for="iv-ni">Teks note</label><input class="input" id="iv-ni" data-f="Note_Isi" value="' + esc(f.Note_Isi) + '"' + (ro ? ' disabled' : '') + '></div></div><p class="help muted" style="margin-top:8px">Rekening, syarat & ketentuan, tanda tangan dan cap diatur Admin di Pengaturan → Perusahaan & Invoice.</p></section>' +
-        '</div><aside class="mf-samping"><div class="card card--tight" id="iv-status">' + H.statusHTML() + '</div><div class="card card--pad0 kertas-panel"><div class="kertas-panel__h"><b>Pratinjau</b><small class="muted">Sama persis dengan PDF</small></div><div id="iv-kertas" class="kertas-tumpuk">' + UI.kerangka(6, 3) + '</div></div></aside></div>';
+        '</div><aside class="mf-samping mf-samping--gulir"><div class="card card--tight" id="iv-status">' + H.statusHTML() + '</div><div class="card card--pad0 kertas-panel"><div class="kertas-panel__h"><b>Pratinjau</b><small class="muted">Sama persis dengan PDF</small></div><div id="iv-kertas" class="kertas-tumpuk">' + UI.kerangka(6, 3) + '</div></div></aside></div>';
       var form = box.querySelector('#iv-form');
       function ubah() { st.kotor = true; box.querySelector('#iv-total').innerHTML = totalHTML(st.f); pratinjauNanti(el); }
       form.addEventListener('input', function (e) {
