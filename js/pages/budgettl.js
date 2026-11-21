@@ -39,8 +39,8 @@
       '<button class="icon-btn bt__hapus" data-bt="hapus" aria-label="Hapus baris">' + ic('trash-2', 18) + '</button></div>';
   }
   function tabelHTML() {
-    return '<div class="bt-kepala hide-sm" aria-hidden="true"><span></span><span>Keterangan</span><span class="num">Budget (Rp)</span><span class="num">Terima TL (Rp)</span><span></span></div>' +
-      '<div class="bt-daftar">' + (st.items.length ? st.items.map(barisHTML).join('') : '<div class="ki-kosong muted">Belum ada baris. Salin dari kalkulasi atau tambah baris baru.</div>') + '</div>' +
+    return '<div class="bt-wadah"><div class="bt-kepala hide-sm" aria-hidden="true"><span></span><span>Keterangan</span><span class="num">Budget (Rp)</span><span class="num">Terima TL (Rp)</span><span></span></div>' +
+      '<div class="bt-daftar">' + (st.items.length ? st.items.map(barisHTML).join('') : '<div class="ki-kosong muted">Belum ada baris. Salin dari kalkulasi atau tambah baris baru.</div>') + '</div></div>' +
       '<div class="row wrap" style="gap:8px;margin-top:10px"><button class="btn btn--soft btn--sm" data-bt="tambah">' + ic('plus', 16) + 'Tambah baris</button><button class="btn btn--ghost btn--sm" data-bt="judul">' + ic('heading', 16) + 'Tambah judul grup</button></div>';
   }
   // Pratinjau tabel BUDGETING seperti di PDF manifest
@@ -62,7 +62,7 @@
   function salinKalkulasi(el) {
     var ix = HT.indeks(Store.D), saran = HT.saranBudgetTL(ix, st.id);
     if (!saran.length) { UI.toast('Kalkulasi pesanan ini belum ada. Buat kalkulasi dulu atau isi manual.', 'warn'); return; }
-    var p = Store.get('Pesanan', st.id), L = HT.labelRekap(Store.S)[HT.infoPesanan(p, Store.S).bagian], lab = {}; L.kolom.forEach(function (k) { lab[k.k] = k.l; });
+    var p = Store.get('Pesanan', st.id), bg = HT.infoPesanan(p, Store.S).bagian, LA = HT.labelRekap(Store.S), lab = {}; saran.forEach(function (x) { if (x.kolom) lab[x.kolom] = HT.labelKolom(LA, bg, x.kolom); });
     var h = UI.modal({ judul: 'Salin dari kalkulasi', sub: 'Centang item yang dipegang Tim Lapang. Setelah disalin, budgeting bisa diubah tanpa mengubah kalkulasi.', ukuran: 'md',
       isi: '<div class="salin-daftar">' + saran.map(function (x, i) { return '<label class="check salin-item"><input type="checkbox" data-s="' + i + '"' + (x.pilih ? ' checked' : '') + '><span class="row__text"><b>' + esc(x.uraian) + '</b><small class="muted">kolom rekap ' + esc(lab[x.kolom] || x.kolom || '-') + '</small></span><span class="num">' + U.ribuan(x.budget) + '</span></label>'; }).join('') + '</div>' +
         '<div class="row wrap" style="gap:16px;margin-top:14px"><label class="check"><input type="radio" name="cara" value="ganti" checked><span>Ganti isian sekarang</span></label><label class="check"><input type="radio" name="cara" value="tambah"' + (st.items.length ? '' : ' disabled') + '><span>Tambahkan di bawah</span></label></div>',

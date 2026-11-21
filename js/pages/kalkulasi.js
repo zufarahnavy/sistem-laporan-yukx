@@ -13,17 +13,17 @@
   function n(v) { return Number(String(v == null ? '' : v).replace(/[^0-9-]/g, '')) || 0; }
   function budget(it, pax) { return Math.round(n(it.Tetap) + n(it.Per_Pax) * (pax || 0)); }
   function rp0(v) { return v ? Number(v).toLocaleString('id-ID') : ''; }
-  function labelKolom(bagian) { return HT.labelRekap(Store.S)[bagian].kolom; }
 
   // ---------------------------------------------------------------- tabel item (dipakai editor & paket)
+  var kusSesi = { YB: [], SB: [] };   // kolom tambahan yang baru diketik (belum tersimpan) — ikut muncul di baris lain
   function barisItem(it, i, bagian, o) {
-    var kol = labelKolom(bagian), b = budget(it, o.pax);
+    var b = budget(it, o.pax);
     return '<div class="ki" data-i="' + i + '">' +
       '<label class="ki__uraian"><span class="sr-only">Uraian</span><input class="input" data-f="Uraian" value="' + esc(it.Uraian) + '" placeholder="Nama item, mis. JEEP BALURAN" autocomplete="off"></label>' +
       '<label class="ki__uang"><span class="ki__l">Tetap</span><input class="input num" data-f="Tetap" inputmode="numeric" value="' + rp0(it.Tetap) + '" placeholder="0"></label>' +
       '<label class="ki__uang"><span class="ki__l">Per pax</span><input class="input num" data-f="Per_Pax" inputmode="numeric" value="' + rp0(it.Per_Pax) + '" placeholder="0"></label>' +
       (o.budget ? '<span class="ki__budget num" data-out="b"><span class="ki__l">Budget</span>' + U.ribuan(b) + '</span>' : '') +
-      '<label class="ki__kol"><span class="ki__l">Kolom rekap</span><select class="select" data-f="Kolom">' + kol.map(function (k) { return '<option value="' + k.k + '"' + (it.Kolom === k.k ? ' selected' : '') + '>' + esc(k.l) + '</option>'; }).join('') + '</select></label>' +
+      '<label class="ki__kol"><span class="ki__l">Kolom rekap</span><select class="select" data-f="Kolom">' + Hal.opsiKolom(bagian, it.Kolom, kusSesi[bagian]) + '</select></label>' +
       '<button class="icon-btn ki__hapus" data-ki="hapus" aria-label="Hapus item">' + ic('trash-2', 18) + '</button></div>';
   }
   function tabelItem(items, bagian, o) {
@@ -41,10 +41,18 @@
       var ob = row.querySelector('[data-out="b"]'); if (ob) ob.innerHTML = '<span class="ki__l">Budget</span>' + U.ribuan(budget(it, o.pax));
       onUbah();
     });
-    root.addEventListener('change', function (e) {
+    root.addEventListener('change', async function (e) {
       var x = e.target.closest('[data-f]'), row = e.target.closest('.ki'); if (!x || !row) return;
       var it = items[+row.dataset.i];
-      if (x.dataset.f === 'Kolom') { it.Kolom = x.value; it._kolomManual = true; }
+      if (x.dataset.f === 'Kolom') {
+        if (x.value === '__lain') {
+          var k = await Hal.tanyaKolomLain(bagian);
+          if (!k) { x.value = it.Kolom; return; }
+          if (/^X:/.test(k) && kusSesi[bagian].indexOf(k) < 0) kusSesi[bagian].push(k);
+          it.Kolom = k; it._kolomManual = true; onRender(); onUbah(); return;
+        }
+        it.Kolom = x.value; it._kolomManual = true;
+      }
       onUbah();
     });
     root.addEventListener('click', function (e) {
@@ -125,7 +133,7 @@
   }
   function daftarPaket() {
     var pk = U.urutkan(Store.D.Paket_Kalkulasi, function (k) { return k.Bagian + k.Nama; });
-    return '<div class="between" style="margin-bottom:14px"><p class="muted">Paket dipakai untuk trip berulang (Open Trip, Sunrise Boat). Saat membuat kalkulasi, paket dengan nama sama seperti kolom TRIP disarankan otomatis.</p><button class="btn btn--primary btn--sm" data-act="paketBaru">' + ic('plus', 16) + 'Paket baru</button></div>' +
+    return '<div class="between wrap" style="margin-bottom:14px;gap:12px"><p class="muted" style="max-width:72ch">Paket = daftar item kalkulasi siap pakai untuk trip yang berulang (Open Trip, Sunrise Boat). Di halaman kalkulasi pesanan, pilih paket lalu klik <b>Pakai</b> — item terisi, biaya per pax dihitung dari jumlah pax pesanan itu, dan tetap bisa diubah. Paket bernama sama dengan kolom TRIP disarankan otomatis. Mengubah paket tidak mengubah kalkulasi yang sudah tersimpan.</p><button class="btn btn--primary btn--sm" data-act="paketBaru">' + ic('plus', 16) + 'Paket baru</button></div>' +
       (pk.length ? '<div class="paket-grid">' + pk.map(function (k) {
         var it = U.parseJson(k.Item, []) || [], tot = it.reduce(function (a, i) { return a + (Number(i.Tetap) || 0); }, 0), pp = it.reduce(function (a, i) { return a + (Number(i.Per_Pax) || 0); }, 0);
         return '<button class="card card--tight paket-kartu" data-act="paket" data-id="' + k.ID_Paket + '"><span class="badge ' + (k.Bagian === 'SB' ? 'info' : 'neutral') + '">' + (k.Bagian === 'SB' ? 'Sunrise Boat' : 'YukBanyuwangi') + '</span><b>' + esc(k.Nama) + '</b><small class="muted">' + it.length + ' item' + (tot ? ' · tetap ' + U.rpRingkas(tot) : '') + (pp ? ' · ' + U.rpRingkas(pp) + '/pax' : '') + '</small></button>';
@@ -142,13 +150,14 @@
     var box = h.el.querySelector('#pk-item'), o = { pax: 0, budget: false };
     function gambar() { box.innerHTML = tabelItem(items, bagian, o); }
     ikatItem(box, items, bagian, o, function () { }, gambar); gambar();
-    h.el.querySelector('#pk-bag').onchange = function (e) { bagian = e.target.value; items.forEach(function (i) { i.Kolom = HT.tebakKolom(bagian, i.Uraian, ''); }); gambar(); };
+    h.el.querySelector('#pk-bag').onchange = function (e) { bagian = e.target.value; items.forEach(function (i) { i.Kolom = HT.kolomValid(bagian, i.Kolom) || HT.tebakKolom(bagian, i.Uraian, ''); }); gambar(); };
   }
 
   // ---------------------------------------------------------------- halaman
   var H = window.Halaman.kalkulasi = {
     render: function (el, args, q) {
       if (args[0]) { if (!Hal.hanyaAdmin()) { args = []; } else { H.renderEditor(el, args[0]); return; } }
+      if (q && q.tab && /^(perlu|mendatang|ada|semua|paket)$/.test(q.tab)) st.daftar = q.tab;
       el.innerHTML = Hal.kepala({ judul: 'Kalkulasi Budget', sub: 'RAB kantor per pesanan untuk perencanaan realisasi anggaran — total BUDGET menjadi draft rekap. Isian yang dipegang Tim Lapang diatur di menu <a href="#/budgettl">Budgeting TL</a>.' }) +
         '<div class="tabs" role="tablist">' + [['perlu', 'Perlu dibuat'], ['mendatang', 'Trip mendatang'], ['ada', 'Sudah ada'], ['semua', 'Semua'], ['paket', 'Paket template']].map(function (t) { return '<button data-act="daftar" data-t="' + t[0] + '" class="' + (st.daftar === t[0] ? 'on' : '') + '">' + t[1] + '</button>'; }).join('') + '</div><div id="kl-isi"></div>';
       Hal.aksiPeta(el, {
@@ -182,7 +191,7 @@
         '<div class="grid-12" style="margin-top:16px"><div class="card span-8 span-lg-12"><div class="card__head"><div class="card__title"><h2>Sumber kalkulasi</h2><p>Pilih salah satu — item tetap bisa diubah setelahnya.</p></div>' + (st.kotor ? '<span class="badge warn">' + ic('pencil', 14) + 'Belum disimpan</span>' : k0 ? '<span class="badge ok">' + ic('check', 14) + 'Tersimpan ' + esc(C.F.relatif(k0.Diperbarui)) + '</span>' : '') + '</div>' +
         '<div class="sumber-kal">' +
         '<div class="sumber-kal__opsi' + (st.sumber === 'CS' ? ' on' : '') + '"><b>' + ic('file-spreadsheet', 18) + 'File Kalkulasi CS</b><div class="row" style="gap:8px"><input class="input" id="ke-link" type="url" placeholder="https://docs.google.com/spreadsheets/d/…" value="' + esc(st.link) + '"><button class="btn btn--primary" data-act="impor"' + (kunci ? ' disabled' : '') + '>' + ic('download', 18) + '<span>Impor</span></button></div><small class="muted">' + (p.Link_Kalkulasi ? 'Link diambil dari kolom KALKULASI di sheet.' : 'Kolom KALKULASI di sheet kosong — tempel link file CS di sini.') + ' Format kolom KETERANGAN & BUDGET.</small></div>' +
-        '<div class="sumber-kal__opsi' + (st.sumber === 'Paket' ? ' on' : '') + '"><b>' + ic('package', 18) + 'Paket template</b><div class="row" style="gap:8px"><select class="select" id="ke-paket"><option value="">' + (pk.length ? 'Pilih paket…' : 'Belum ada paket ' + bagian) + '</option>' + pk.map(function (k) { return '<option value="' + k.ID_Paket + '"' + ((st.paket === k.Nama) || (!st.paket && cocok && cocok.ID_Paket === k.ID_Paket) ? ' selected' : '') + '>' + esc(k.Nama) + (cocok && cocok.ID_Paket === k.ID_Paket ? ' · cocok dengan trip' : '') + '</option>'; }).join('') + '</select><button class="btn btn--ghost" data-act="pakai"' + (kunci || !pk.length ? ' disabled' : '') + '>' + ic('copy', 18) + '<span>Pakai</span></button></div><small class="muted">Untuk Open Trip & Sunrise Boat berulang. Biaya per pax dihitung dari ' + st.pax + ' pax.</small></div></div>' +
+        '<div class="sumber-kal__opsi' + (st.sumber === 'Paket' ? ' on' : '') + '"><b>' + ic('package', 18) + 'Paket template</b><div class="row" style="gap:8px"><select class="select" id="ke-paket"><option value="">' + (pk.length ? 'Pilih paket…' : 'Belum ada paket') + '</option>' + pk.map(function (k) { return '<option value="' + k.ID_Paket + '"' + ((st.paket === k.Nama) || (!st.paket && cocok && cocok.ID_Paket === k.ID_Paket) ? ' selected' : '') + '>' + esc(k.Nama) + (cocok && cocok.ID_Paket === k.ID_Paket ? ' · cocok dengan trip' : '') + '</option>'; }).join('') + '</select><button class="btn btn--ghost" data-act="pakai"' + (kunci || !pk.length ? ' disabled' : '') + '>' + ic('copy', 18) + '<span>Pakai</span></button></div><small class="muted">' + (pk.length ? 'Isi item dari paket trip berulang (Open Trip, Sunrise Boat). Biaya per pax dihitung dari ' + st.pax + ' pax. <a href="#/kalkulasi?tab=paket">Kelola paket</a>' : 'Belum ada paket untuk kolom ' + (bagian === 'SB' ? 'Sunrise Boat' : 'YukBanyuwangi') + '. Buat di <a href="#/kalkulasi?tab=paket">tab Paket template</a>, atau centang "Simpan juga sebagai paket" saat menyimpan kalkulasi ini.') + '</small></div></div>' +
         '<div class="field" style="max-width:220px;margin-top:16px"><label for="ke-pax">Pax untuk kalkulasi</label><input class="input num" id="ke-pax" type="number" min="1" value="' + st.pax + '"><div class="help">Pax di sheet: ' + inf.pax + '</div></div></div>' +
         '<div class="card span-4 span-lg-12 card--ringkas" id="ke-ringkas">' + ringkas(p) + '</div></div>' +
         '<div class="card" style="margin-top:16px"><div class="card__head"><div class="card__title"><h2>Item kalkulasi</h2><p>Semua pengeluaran trip (kendaraan, penginapan, paket pulau, TL, makan, karcis…). Pilih kolom rekap tiap item — diingat untuk kalkulasi berikutnya.</p></div></div><div id="ke-item"' + (kunci ? ' class="terkunci"' : '') + '></div>' +

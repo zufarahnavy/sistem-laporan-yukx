@@ -65,7 +65,7 @@
             else { var b = await C.api('boot', {}); if (!b.success) throw new Error(b.message); Store.setBoot(b.data); }
           }
           C.Tema.terapkan(Store.S);
-          await fontSiap; this.renderShell(); this.route(true);
+          await fontSiap; this.renderShell(); this.cekVersi(); this.route(true);
         } else {
           C.Tema.terapkan(Store.S || {}); await fontSiap; this.renderLogin();
         }
@@ -167,7 +167,7 @@
       else if (!C.DEMO) { var b = await C.api('boot', {}); if (!b.success) { UI.toast(b.message, 'err'); btn.classList.remove('loading'); btn.innerHTML = label; return; } Store.setBoot(b.data); }
       C.Tema.terapkan(Store.S); clearInterval(this._slide); try { C.LS.set('yb:login', pilihKunci(Store.S)); } catch (e) { }
       var app = document.getElementById('app'); app.classList.remove('ready');
-      setTimeout(function () { App.renderShell(); if (!location.hash || location.hash === '#/') location.hash = '#/dashboard'; App.route(true); app.classList.add('ready'); UI.toast(r.message || 'Berhasil masuk.', 'ok'); }, 180);
+      setTimeout(function () { App.renderShell(); App.cekVersi(); if (!location.hash || location.hash === '#/') location.hash = '#/dashboard'; App.route(true); app.classList.add('ready'); UI.toast(r.message || 'Berhasil masuk.', 'ok'); }, 180);
     },
     keluar: async function () {
       var ok = await UI.konfirmasi({ judul: 'Keluar dari aplikasi?', teks: 'Sesi di perangkat ini akan diakhiri.', ok: 'Keluar', bahaya: true, ikon: 'log-out' });
@@ -190,6 +190,7 @@
     renderShell: function () {
       var me = Store.me, S = Store.S, app = document.getElementById('app');
       app.innerHTML = (C.DEMO ? '<div class="demo-banner">' + ic('sparkles', 16) + '<span>Mode Demo — data contoh di perangkat ini · <a href="#/pengaturan/sistem" style="color:inherit;text-decoration:underline">reset data</a></span></div>' : '') +
+        '<div class="versi-banner" id="versi-banner" role="status" hidden></div>' +
         '<div class="app"><aside class="sidebar"><div class="sidebar__card"><a class="brand" href="#/dashboard">' + this.logoHTML() + '<div class="brand__txt"><div class="brand__name" id="brand-nama">' + esc(S.APP_NAMA) + '</div><div class="brand__tag" id="brand-tag">' + esc(S.APP_TAGLINE) + '</div></div></a>' +
         '<nav class="nav" id="nav" aria-label="Menu utama"></nav><div id="live-card"></div><button class="logout" id="btn-keluar">' + ic('log-out', 18) + '<span>Keluar</span></button></div></aside>' +
         '<div class="main"><header class="topbar" id="topbar"><div class="mobile-top only-sm"><a href="#/dashboard">' + this.logoHTML() + '</a><div class="stack" style="gap:0;min-width:0"><b class="truncate" style="font-size:15px">' + esc(S.APP_NAMA) + '</b><span id="sinkron-m"></span></div></div>' +
@@ -317,11 +318,22 @@
       setInterval(function () { self.indikatorSinkron(); }, 10000);
       this.badgeLonceng();
     },
+    /** Tampilan & server beda versi → pita peringatan (mis. backend belum dibuat "Versi baru" di Kelola deployment). */
+    cekVersi: function () {
+      var el = document.getElementById('versi-banner'), sv = Store.serverV, av = YX.VERSI; if (!el || C.DEMO || !sv) return;
+      function n(v) { return String(v).split('.').map(function (x) { return Number(x) || 0; }); }
+      var a = n(sv), b = n(av), beda = 0; for (var i = 0; i < 3 && !beda; i++) beda = (a[i] || 0) - (b[i] || 0);
+      if (!beda) { el.hidden = true; return; }
+      el.hidden = false;
+      el.innerHTML = ic('triangle-alert', 16) + '<span>' + (beda < 0
+        ? (Store.isAdmin() ? 'Server Apps Script masih <b>v' + esc(sv) + '</b>, tampilan aplikasi <b>v' + esc(av) + '</b> — fitur baru belum bisa disimpan. Ganti berkas backend, jalankan <b>setupAppEnvironment</b>, lalu <b>Terapkan → Kelola deployment → Edit → Versi baru → Terapkan</b>.' : 'Server aplikasi sedang menunggu pembaruan dari Admin — sebagian fitur baru belum bisa disimpan.')
+        : 'Ada versi tampilan yang lebih baru (server v' + esc(sv) + '). Muat ulang halaman dengan <b>Ctrl+Shift+R</b>.') + '</span>';
+    },
     tindakan: function () {
       if (!Store.me) return [];
       var D = Store.D, today = U.hariIni(), db = HT.dashboard(D, { today: today, S: Store.S }), peran = Store.me.peran, out = [];
       db.aksi.filter(function (a) { return a.peran === peran; }).slice(0, 18).forEach(function (a) {
-        var ik = { kalkulasi: 'calculator', manifest: 'clipboard-list', rekap: 'chart-column', kunci: 'lock', tagihan: 'hand-coins' }[a.jenis] || 'circle-alert';
+        var ik = { kalkulasi: 'calculator', budgettl: 'wallet-cards', manifest: 'clipboard-list', rekap: 'chart-column', kunci: 'lock', tagihan: 'hand-coins' }[a.jenis] || 'circle-alert';
         out.push({ ikon: ik, tone: a.jenis === 'tagihan' && a.h < 0 ? 'danger' : 'warn', judul: a.label, sub: (a.i.p ? a.i.p.Nama : (a.r ? a.r.p.Nama : '')) + ' · ' + (a.i.jadwal || ''), go: a.go });
       });
       (D.Antrean_Tugas || []).filter(function (t) { return t.Status === 'Gagal'; }).slice(0, 3).forEach(function (t) { out.push({ ikon: 'triangle-alert', tone: 'danger', judul: 'Tugas otomatis gagal: ' + (t.Jenis === 'KAL_SINKRON' ? 'sinkron Calendar' : t.Jenis === 'REKAP_SHEET' ? 'tulis rekap ke Sheet' : t.Jenis), sub: t.Hasil, go: 'log' }); });
@@ -410,6 +422,23 @@
   window.Hal = {
     kepala: function (o) {
       return '<div class="page-head"><div class="page-head__txt">' + (o.crumbs ? '<div class="crumbs">' + o.crumbs.map(function (c, i) { return '<span>' + esc(c) + '</span>' + (i < o.crumbs.length - 1 ? ic('chevron-right', 14, 'muted') : ''); }).join('') + '</div>' : '') + '<h1>' + esc(o.judul) + '</h1>' + (o.sub ? '<p>' + o.sub + '</p>' : '') + '</div>' + (o.aksi ? '<div class="toolbar">' + o.aksi + '</div>' : '') + '</div>';
+    },
+    /** Pilihan kolom rekap: kolom standar, kolom tambahan yang sudah dipakai, lalu "Lainnya (tulis sendiri)…". */
+    opsiKolom: function (bagian, pilih, ekstra) {
+      var L = HT.labelRekap(Store.S), kus = HT.kolomKustomDipakai(Store.D, Store.S, bagian), ada = {};
+      kus.forEach(function (k) { ada[k.k] = 1; });
+      (ekstra || []).concat([pilih]).forEach(function (k) { if (/^X:/.test(k || '') && !ada[k]) { ada[k] = 1; kus.push({ k: k, l: k.slice(2) }); } });
+      kus.sort(function (a, b) { return a.l.localeCompare(b.l); });
+      function opt(k) { return '<option value="' + esc(k.k) + '"' + (k.k === pilih ? ' selected' : '') + '>' + esc(k.l) + '</option>'; }
+      return L[bagian].kolom.map(opt).join('') + (kus.length ? '<optgroup label="Kolom tambahan">' + kus.map(opt).join('') + '</optgroup>' : '') + '<option value="__lain">Lainnya (tulis sendiri)…</option>';
+    },
+    /** Minta nama kolom tambahan → kunci "X:NAMA" (atau kunci standar bila namanya sama dengan kolom yang sudah ada). */
+    tanyaKolomLain: async function (bagian) {
+      var v = await UI.konfirmasi({ judul: 'Kolom rekap baru', teks: 'Tulis nama kolomnya. Kolom ini tampil sebagai kolom tambahan di Rekapitulasi (aplikasi, Excel, PDF, Google Sheet) pada bulan yang memakainya, dan tersedia sebagai pilihan berikutnya.', ok: 'Pakai kolom', ikon: 'table-2', input: { label: 'Nama kolom', wajib: true, placeholder: 'mis. PARKIR atau DOKUMENTASI' } });
+      if (!v || v === true) return '';
+      var k = HT.kolomKustom(bagian, v); if (!k) { UI.toast('Nama kolom belum valid — gunakan huruf atau angka.', 'warn'); return ''; }
+      if (!/^X:/.test(k)) UI.toast('"' + v + '" sudah ada sebagai kolom ' + HT.labelKolom(HT.labelRekap(Store.S), bagian, k) + ' — kolom itu yang dipakai.', 'info', 5000);
+      return k;
     },
     aksiPeta: function (el, peta, lain) {
       el.onclick = function (e) {

@@ -393,8 +393,8 @@
         startY: this.y, head: head, body: baris.map(function (r) { var a = r.map(function (c) { return c && typeof c === 'object' ? Object.assign({}, c, { content: aman(c.content) }) : aman(c); }); a.__grup = r.__grup; a.__alert = r.__alert; a.__redup = r.__redup; a.__total = r.__total; return a; }),
         foot: kaki ? [kaki.map(function (c) { return c && typeof c === 'object' ? Object.assign({}, c, { content: aman(c.content) }) : aman(c); })] : undefined, showFoot: 'lastPage', showHead: 'everyPage',
         theme: 'grid', margin: { top: 40, bottom: 48, left: this.M, right: this.M }, tableWidth: this.L, rowPageBreak: 'avoid',
-        styles: { font: 'helvetica', fontSize: o.mini ? 6.4 : o.kecil ? 7 : 8.2, cellPadding: o.mini ? { top: 3, bottom: 3, left: 2.5, right: 2.5 } : { top: 3.5, bottom: 3.5, left: 4, right: 4 }, lineColor: RGB.garis, lineWidth: .5, textColor: RGB.teks, overflow: 'linebreak', valign: 'middle' },
-        headStyles: { fillColor: RGB.tint, textColor: RGB.gelap, fontStyle: 'bold', fontSize: o.mini ? 6.2 : o.kecil ? 6.8 : 7.8, valign: 'middle', halign: 'center' },
+        styles: { font: 'helvetica', fontSize: o.mini ? (typeof o.mini === 'number' ? o.mini : 6.4) : o.kecil ? 7 : 8.2, cellPadding: o.mini ? { top: 3, bottom: 3, left: 2.5, right: 2.5 } : { top: 3.5, bottom: 3.5, left: 4, right: 4 }, lineColor: RGB.garis, lineWidth: .5, textColor: RGB.teks, overflow: 'linebreak', valign: 'middle' },
+        headStyles: { fillColor: RGB.tint, textColor: RGB.gelap, fontStyle: 'bold', fontSize: o.mini ? (typeof o.mini === 'number' ? o.mini - 0.2 : 6.2) : o.kecil ? 6.8 : 7.8, valign: 'middle', halign: 'center' },
         footStyles: { fillColor: this.P, textColor: 255, fontStyle: 'bold' }, alternateRowStyles: { fillColor: [250, 252, 253] }, columnStyles: cs,
         didParseCell: function (dc) {
           if (dc.section !== 'body') return; var raw = dc.row.raw || {};
@@ -428,18 +428,18 @@
   async function laporanRekap(data, label, judulPeriode) {
     if (!(await siapPdf())) return; var p = new Pdf({ judul: label.JUDUL || 'Rekapitulasi Trip', sub: 'Rekapitulasi ' + judulPeriode, lanskap: true, logo: await logoKop() });
     (data.tabs || []).forEach(function (tb) {
-      var b = tb.bagian === 'SB' ? 'SB' : 'YB', rows = tb.rk || [], L = label[b].L, kol = label[b].kolom;
+      var b = tb.bagian === 'SB' ? 'SB' : 'YB', rows = tb.rk || [], L = label[b].L, kol = tb.kolom && tb.kolom.length ? tb.kolom : label[b].kolom;
       if (rows.length) p.cukup(130);   // judul tab tidak tertinggal sendirian di bawah halaman
       p.bagian(String(tb.nama).toUpperCase(), rows.length ? rows.length + ' trip · kolom ' + (b === 'SB' ? 'Sunrise Boat' : 'YukBanyuwangi') : 'belum ada trip');
       if (!rows.length) { p.teks('', 'Belum ada trip di bulan ini.'); return; }
-      var head = [[{ content: L.NO, rowSpan: 2 }, { content: L.KODE, rowSpan: 2 }, { content: L.QTY, rowSpan: 2 }, { content: L.PIC, rowSpan: 2 }, { content: L.PRICE, rowSpan: 2 }, { content: L.PENJUALAN, rowSpan: 2 }].concat(L.HPP ? [{ content: L.HPP, colSpan: 10 }] : kol.map(function (k) { return { content: k.l, rowSpan: 2 }; })).concat([{ content: L.PENGELUARAN, rowSpan: 2 }, { content: L.LABA, rowSpan: 2 }, L.MARGIN_A, L.RATAAN_A]),
+      var head = [[{ content: L.NO, rowSpan: 2 }, { content: L.KODE, rowSpan: 2 }, { content: L.QTY, rowSpan: 2 }, { content: L.PIC, rowSpan: 2 }, { content: L.PRICE, rowSpan: 2 }, { content: L.PENJUALAN, rowSpan: 2 }].concat(L.HPP ? [{ content: L.HPP, colSpan: kol.length }] : kol.map(function (k) { return { content: k.l, rowSpan: 2 }; })).concat([{ content: L.PENGELUARAN, rowSpan: 2 }, { content: L.LABA, rowSpan: 2 }, L.MARGIN_A, L.RATAAN_A]),
         (L.HPP ? kol.map(function (k) { return k.l; }) : []).concat([L.MARGIN_B, L.RATAAN_B])].map(function (r) { return r.map(function (c) { return typeof c === 'object' ? Object.assign({}, c, { content: aman(c.content) }) : aman(c); }); });
       var body = rows.map(function (r, i) { var a = [String(i + 1), r.kode + (r.kunci ? '' : '  (draft)'), String(r.inf.pax), b === 'SB' ? r.kapal : r.p.PIC, U.ribuan(r.inf.harga), U.ribuan(r.penjualan)].concat(kol.map(function (k) { return r.kol[k.k] ? U.ribuan(r.kol[k.k]) : ''; })).concat([U.ribuan(r.pengeluaran), U.ribuan(r.laba), U.ribuan(r.laba), (Math.round(r.margin * 10000) / 100).toFixed(2).replace('.', ',') + '%']); if (r.rugi) a.__alert = true; return a; });
       var t = HT.totalRekap(rows), tk = {}; rows.forEach(function (r) { kol.forEach(function (k) { tk[k.k] = (tk[k.k] || 0) + (r.kol[k.k] || 0); }); });
       var foot = ['', 'TOTAL', String(t.pax), '', '', U.ribuan(t.penjualan)].concat(kol.map(function (k) { return tk[k.k] ? U.ribuan(tk[k.k]) : ''; })).concat([U.ribuan(t.pengeluaran), U.ribuan(t.laba), U.ribuan(t.laba), (Math.round(t.margin * 10000) / 100).toFixed(2).replace('.', ',') + '%']);
-      var w = [16, 92, 20, 30, 40, 46]; kol.forEach(function () { w.push(39); }); w.push(46, 46, 46, 32);
+      var nK = kol.length, w = [16, nK > 10 ? Math.max(56, 92 - (nK - 10) * 12) : 92, 20, 30, 40, 50]; kol.forEach(function () { w.push(39); }); w.push(50, 48, 48, 32);
       var tot = w.reduce(function (a, b2) { return a + b2; }, 0), k = p.L / tot;
-      p.tabel(w.map(function (x, i) { return { judul: '', w: x * k, kanan: i > 3 && i !== 1, tengah: i === 0 || i === 2 }; }), body, foot, { head: head, kecil: true, mini: true });
+      p.tabel(w.map(function (x, i) { return { judul: '', w: x * k, kanan: i > 3 && i !== 1, tengah: i === 0 || i === 2 }; }), body, foot, { head: head, kecil: true, mini: nK > 11 ? 5.8 : 6.4 });
     });
     p.teks('Catatan', 'Baris "(draft)" belum dikunci Finance. Laba rugi hanya memakai rekap yang sudah dikunci.');
     p.selesai('Rekapitulasi ' + judulPeriode);
@@ -451,7 +451,7 @@
     b.push(Object.assign(['Penjualan trip (' + T.trip + ' trip terkunci, ' + T.pax + ' pax)', U.rp(T.penjualan)], { __grup: true }));
     ['YB', 'SB'].forEach(function (bg) { var pb = lr.perBagian[bg]; if (!pb.n) return; b.push(['   ' + L[bg].L.JUDUL + ' (' + pb.n + ' trip)', U.rp(pb.penjualan)]); });
     b.push(Object.assign(['Pengeluaran trip (HPP)', '(' + U.rp(T.pengeluaran) + ')'], { __grup: true }));
-    ['YB', 'SB'].forEach(function (bg) { L[bg].kolom.forEach(function (k) { var v = lr.hpp[bg][k.k]; if (v) b.push(['   ' + L[bg].L.JUDUL + ' · ' + k.l, U.rp(v)]); }); });
+    ['YB', 'SB'].forEach(function (bg) { HT.kolomDenganKustom(L, bg, Object.keys(lr.hpp[bg] || {})).forEach(function (k) { var v = lr.hpp[bg][k.k]; if (v) b.push(['   ' + L[bg].L.JUDUL + ' · ' + k.l, U.rp(v)]); }); });
     b.push(Object.assign(['LABA KOTOR', U.rp(T.labaKotor)], { __total: true }));
     b.push(Object.assign(['Biaya operasional perusahaan', '(' + U.rp(T.operasional) + ')'], { __grup: true }));
     Object.keys(lr.opsKat).sort().forEach(function (k) { b.push(['   ' + k, U.rp(lr.opsKat[k])]); });
@@ -495,7 +495,7 @@
         if (s.g === 'uang' || s.g === 'uangH') c.numFmt = '#,##0'; if (s.g === 'persen') c.numFmt = '0.00%';
         c.alignment = { vertical: 'middle', horizontal: /^k[A-Z]|^no$|angka|persen/.test(s.g) ? 'center' : (s.g === 'uang' || s.g === 'uangH' ? 'right' : 'left'), wrapText: /^k[A-Z]/.test(s.g) };
       });
-      t.blok.forEach(function (bk) { for (var r = bk[0]; r <= bk[1]; r++) for (var c2 = 0; c2 < t.kolom; c2++) ws.getCell(r + 1, c2 + 1).border = { top: { style: 'thin' }, left: { style: 'thin' }, bottom: { style: 'thin' }, right: { style: 'thin' } }; });
+      t.blok.forEach(function (bk) { for (var r = bk[0]; r <= bk[1]; r++) for (var c2 = 0; c2 < (bk[2] || t.kolom); c2++) ws.getCell(r + 1, c2 + 1).border = { top: { style: 'thin' }, left: { style: 'thin' }, bottom: { style: 'thin' }, right: { style: 'thin' } }; });
       t.gabung.forEach(function (m) { ws.mergeCells(m[0] + 1, m[1] + 1, m[2] + 1, m[3] + 1); });
     });
     var buf = await wb.xlsx.writeBuffer();

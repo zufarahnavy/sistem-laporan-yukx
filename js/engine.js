@@ -22,7 +22,7 @@
 var YX = (function () {
   'use strict';
 
-  var VERSI = '2.1.0';
+  var VERSI = '2.1.1';
   var TZ_MENIT = 420; // WIB (UTC+7)
 
   // ==========================================================================
@@ -534,7 +534,45 @@ var YX = (function () {
   }
 
   // ---------- Kalkulasi ----------
-  function kolomValid(bagian, k) { return REKAP_KOLOM[bagian].some(function (x) { return x[0] === k; }) ? k : ''; }
+  // Kolom rekap: kunci standar (KEND, HOTEL…) atau kolom tambahan tulisan Admin berawalan "X:" (mis. "X:PARKIR")
+  var POLA_KUSTOM = /^X:/;
+  function namaKolomKustom(v) { return str(v).toUpperCase().replace(/[^A-Z0-9 &\/.,+()\-]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 30); }
+  /** Teks bebas Admin → kunci kolom. Nama yang sama dengan kolom standar dipetakan ke kolom standar itu. */
+  function kolomKustom(bagian, nama) {
+    var n = namaKolomKustom(nama), nn = normalHeader(n).replace(/[^A-Z0-9]/g, ''); if (!n || !nn) return '';
+    var std = (REKAP_KOLOM[bagian] || REKAP_KOLOM.YB).filter(function (x) { return x[0] === nn || normalHeader(x[1]).replace(/[^A-Z0-9]/g, '') === nn; })[0];
+    return std ? std[0] : 'X:' + n;
+  }
+  function kolomValid(bagian, k) {
+    k = str(k); if (POLA_KUSTOM.test(k)) return kolomKustom(bagian, k.slice(2));
+    return (REKAP_KOLOM[bagian] || REKAP_KOLOM.YB).some(function (x) { return x[0] === k; }) ? k : '';
+  }
+  function labelKolom(L, bagian, k) { k = str(k); return POLA_KUSTOM.test(k) ? k.slice(2) : ((L && L[bagian] && L[bagian].L[k]) || k); }
+  /** Kolom standar bagian + kolom tambahan dari daftar kunci (urut abjad, setelah kolom standar). */
+  function kolomDenganKustom(L, bagian, kunci) {
+    var x = {}; (kunci || []).forEach(function (k) { if (POLA_KUSTOM.test(str(k))) x[k] = 1; });
+    return L[bagian].kolom.concat(Object.keys(x).sort().map(function (k) { return { k: k, l: k.slice(2), x: true }; }));
+  }
+  /** Kolom satu tabel rekap: kolom tambahan hanya yang berisi angka di baris tabel itu. */
+  function kolomRekapBaris(L, bagian, rows) {
+    var k = []; (rows || []).forEach(function (r) { Object.keys(r.kol || {}).forEach(function (x) { if (num(r.kol[x])) k.push(x); }); });
+    return kolomDenganKustom(L, bagian, k);
+  }
+  /** Kolom tambahan yang sedang dipakai (kalkulasi, paket, tambahan rekap, rekap terkunci) — jadi pilihan berikutnya. */
+  function kolomKustomDipakai(D, S, bagian) {
+    var o = {}, psn = {}, bg = {};
+    (D.Pesanan || []).forEach(function (p) { psn[p.ID_Pesanan] = p; });
+    function bagianDari(id) { if (bg[id] === undefined) bg[id] = psn[id] ? infoPesanan(psn[id], S || {}).bagian : ''; return bg[id]; }
+    function catat(b, k) { if (b !== bagian || !POLA_KUSTOM.test(str(k))) return; var v = kolomValid(bagian, k); if (POLA_KUSTOM.test(v)) o[v] = 1; }
+    (D.Kalkulasi_Item || []).forEach(function (i) { if (POLA_KUSTOM.test(str(i.Kolom))) catat(bagianDari(i.ID_Pesanan), i.Kolom); });
+    (D.Paket_Kalkulasi || []).forEach(function (pk) { (parseJson(pk.Item, []) || []).forEach(function (i) { catat(pk.Bagian === 'SB' ? 'SB' : 'YB', i.Kolom); }); });
+    (D.Rekap || []).forEach(function (r) {
+      var b = r.Bagian === 'SB' ? 'SB' : r.Bagian === 'YB' ? 'YB' : bagianDari(r.ID_Pesanan);
+      (parseJson(r.Tambahan, []) || []).forEach(function (t) { catat(b, t.kolom); });
+      var sp = r.Status === 'Terkunci' ? parseJson(r.Snapshot, null) : null; if (sp && sp.kol) Object.keys(sp.kol).forEach(function (k) { if (num(sp.kol[k])) catat(sp.bagian || b, k); });
+    });
+    return Object.keys(o).sort().map(function (k) { return { k: k, l: k.slice(2), x: true }; });
+  }
   function kolomCadangan(bagian) { return bagian === 'SB' ? 'LAIN' : 'LL'; }
   function tebakKolom(bagian, uraian, grup) {
     var U = normalHeader(uraian), daftar = KATA_KOLOM[bagian] || KATA_KOLOM.YB;
@@ -620,9 +658,10 @@ var YX = (function () {
     }
     var inf = infoPesanan(p, S), b = inf.bagian, kal = ringkasKalkulasi(ix, id), kol = {}, asal = {};
     REKAP_KOLOM[b].forEach(function (k) { kol[k[0]] = 0; asal[k[0]] = { kalkulasi: 0, tambahan: 0 }; });
-    kal.items.forEach(function (i) { var k = kolomValid(b, i.Kolom) || tebakKolom(b, i.Uraian, i.Ke_TL === 'YA' ? i.Grup : ''); kol[k] += num(i.Budget); asal[k].kalkulasi += num(i.Budget); });
+    function siapkan(k) { if (kol[k] == null) { kol[k] = 0; asal[k] = { kalkulasi: 0, tambahan: 0 }; } return k; }   // kolom tambahan (X:…) dibuat saat dipakai
+    kal.items.forEach(function (i) { var k = siapkan(kolomValid(b, i.Kolom) || tebakKolom(b, i.Uraian, i.Ke_TL === 'YA' ? i.Grup : '')); kol[k] += num(i.Budget); asal[k].kalkulasi += num(i.Budget); });
     var tamb = parseJson(row && row.Tambahan, []) || [], over = 0;
-    tamb.forEach(function (t) { var k = kolomValid(b, t.kolom) || kolomCadangan(b); kol[k] += num(t.nominal); asal[k].tambahan += num(t.nominal); if (t.jenis === 'Over budget') over += num(t.nominal); });
+    tamb.forEach(function (t) { var k = siapkan(kolomValid(b, t.kolom) || kolomCadangan(b)); kol[k] += num(t.nominal); asal[k].tambahan += num(t.nominal); if (t.jenis === 'Over budget') over += num(t.nominal); });
     var penjualan = inf.pax * inf.harga || inf.total, pengeluaran = 0; Object.keys(kol).forEach(function (k) { pengeluaran += kol[k]; });
     var laba = penjualan - pengeluaran;
     return { id: id, p: p, inf: inf, bagian: b, kode: (row && str(row.Kode_Trip)) || inf.kode, kapal: row ? str(row.Kapal) : '', kol: kol, asal: asal, tambahan: tamb, over: over,
@@ -894,22 +933,24 @@ var YX = (function () {
    * g (gaya): judul | sub (nama tab) | kO kP kH kG kK kM kW (kepala) | no | teks | angka | uang | uangH | persen | kosong
    */
   function tataRekap(data, L) {
-    var sel = [], gabung = [], blok = [], r = 0;
+    var sel = [], gabung = [], blok = [], r = 0, maksK = 10;
     function put(rr, c, v, g, f) { sel.push({ r: rr, c: c, v: v == null ? '' : v, g: g || 'teks', f: f || '' }); }
-    function A1(c, rr) { return String.fromCharCode(65 + c) + (rr + 1); }
+    function huruf(c) { var s2 = ''; c += 1; while (c > 0) { var m = (c - 1) % 26; s2 = String.fromCharCode(65 + m) + s2; c = Math.floor((c - 1) / 26); } return s2; }
+    function A1(c, rr) { return huruf(c) + (rr + 1); }
     put(r, 0, L.JUDUL || 'YUKBANYUWANGI', 'judul'); gabung.push([r, 0, r, 1]); r += 2;
     ((data && data.tabs) || []).forEach(function (tb) {
-      var b = tb.bagian === 'SB' ? 'SB' : 'YB', lb = L[b].L, kol = L[b].kolom, rows = tb.rows || [], h1, h2, yb = b === 'YB';
+      var b = tb.bagian === 'SB' ? 'SB' : 'YB', lb = L[b].L, kol = tb.kolom && tb.kolom.length ? tb.kolom : L[b].kolom, rows = tb.rows || [], h1, h2, yb = b === 'YB';
+      var nK = kol.length, cP = 6 + nK, cL = cP + 1, cM = cP + 2, cR = cP + 3; maksK = Math.max(maksK, nK);
       put(r, 0, String(tb.nama || '').toUpperCase(), 'sub'); gabung.push([r, 0, r, 1]); r += 1; h1 = r; h2 = r + 1;
       [[0, lb.NO], [1, lb.KODE], [2, lb.QTY], [3, lb.PIC], [4, lb.PRICE]].forEach(function (x) { put(h1, x[0], x[1], 'kO'); put(h2, x[0], '', 'kO'); gabung.push([h1, x[0], h2, x[0]]); });
       put(h1, 5, lb.PENJUALAN, yb ? 'kH' : 'kG'); put(h2, 5, '', yb ? 'kH' : 'kG'); gabung.push([h1, 5, h2, 5]);
       var adaHpp = !!str(lb.HPP), warnaSB = ['kP', 'kO', 'kO', 'kO', 'kO', 'kP', 'kO', 'kO', 'kP', 'kO'];
-      if (adaHpp) { put(h1, 6, lb.HPP, 'kW'); for (var c = 7; c <= 15; c++) put(h1, c, '', 'kW'); gabung.push([h1, 6, h1, 15]); kol.forEach(function (k, i) { put(h2, 6 + i, k.l, 'kP'); }); }
-      else kol.forEach(function (k, i) { var g = yb ? 'kP' : warnaSB[i]; put(h1, 6 + i, k.l, g); put(h2, 6 + i, '', g); gabung.push([h1, 6 + i, h2, 6 + i]); });
-      put(h1, 16, lb.PENGELUARAN, yb ? 'kH' : 'kM'); put(h2, 16, '', yb ? 'kH' : 'kM'); gabung.push([h1, 16, h2, 16]);
-      put(h1, 17, lb.LABA, yb ? 'kO' : 'kK'); put(h2, 17, '', yb ? 'kO' : 'kK'); gabung.push([h1, 17, h2, 17]);
-      put(h1, 18, lb.MARGIN_A, yb ? 'kO' : 'kK'); put(h2, 18, lb.MARGIN_B, yb ? 'kO' : 'kK');
-      put(h1, 19, lb.RATAAN_A, yb ? 'kO' : 'kK'); put(h2, 19, lb.RATAAN_B, yb ? 'kO' : 'kK');
+      if (adaHpp) { put(h1, 6, lb.HPP, 'kW'); for (var c = 7; c < cP; c++) put(h1, c, '', 'kW'); if (nK > 1) gabung.push([h1, 6, h1, cP - 1]); kol.forEach(function (k, i) { put(h2, 6 + i, k.l, 'kP'); }); }
+      else kol.forEach(function (k, i) { var g = yb ? 'kP' : (warnaSB[i] || 'kO'); put(h1, 6 + i, k.l, g); put(h2, 6 + i, '', g); gabung.push([h1, 6 + i, h2, 6 + i]); });
+      put(h1, cP, lb.PENGELUARAN, yb ? 'kH' : 'kM'); put(h2, cP, '', yb ? 'kH' : 'kM'); gabung.push([h1, cP, h2, cP]);
+      put(h1, cL, lb.LABA, yb ? 'kO' : 'kK'); put(h2, cL, '', yb ? 'kO' : 'kK'); gabung.push([h1, cL, h2, cL]);
+      put(h1, cM, lb.MARGIN_A, yb ? 'kO' : 'kK'); put(h2, cM, lb.MARGIN_B, yb ? 'kO' : 'kK');
+      put(h1, cR, lb.RATAAN_A, yb ? 'kO' : 'kK'); put(h2, cR, lb.RATAAN_B, yb ? 'kO' : 'kK');
       r += 2;
       if (!rows.length) { put(r, 0, '', 'no'); put(r, 1, 'Belum ada trip di bulan ini', 'kosong'); }
       rows.forEach(function (x, i) {
@@ -918,15 +959,16 @@ var YX = (function () {
         put(rr, 5, num(x.qty) * num(x.price), 'uang', '=' + A1(2, rr) + '*' + A1(4, rr));
         var peng = 0; kol.forEach(function (k, j) { var v = num((x.kol || {})[k.k]); peng += v; put(rr, 6 + j, v || '', 'uang'); });
         var jual = num(x.qty) * num(x.price), laba = jual - peng;
-        put(rr, 16, peng, 'uangH', '=SUM(' + A1(6, rr) + ':' + A1(15, rr) + ')');
-        put(rr, 17, laba, 'uang', '=' + A1(5, rr) + '-' + A1(16, rr));
-        put(rr, 18, laba, 'uang', '=' + A1(17, rr));
-        put(rr, 19, jual ? laba / jual : 0, 'persen', '=IFERROR(' + A1(18, rr) + '/' + A1(5, rr) + ',0)');
+        put(rr, cP, peng, 'uangH', '=SUM(' + A1(6, rr) + ':' + A1(cP - 1, rr) + ')');
+        put(rr, cL, laba, 'uang', '=' + A1(5, rr) + '-' + A1(cP, rr));
+        put(rr, cM, laba, 'uang', '=' + A1(cL, rr));
+        put(rr, cR, jual ? laba / jual : 0, 'persen', '=IFERROR(' + A1(cM, rr) + '/' + A1(5, rr) + ',0)');
       });
-      blok.push([h1, r + Math.max(rows.length, 1) - 1]);
+      blok.push([h1, r + Math.max(rows.length, 1) - 1, cR + 1]);
       r += Math.max(rows.length, 1) + 2;
     });
-    return { sel: sel, gabung: gabung, blok: blok, baris: r, kolom: 20, lebar: [5, 70, 7, 13, 12, 14, 13, 12, 12, 13, 12, 12, 12, 12, 12, 12, 15, 15, 14, 10] };
+    var lebar = [5, 70, 7, 13, 12, 14]; for (var j = 0; j < maksK; j++) lebar.push(j < 10 ? [13, 12, 12, 13, 12, 12, 12, 12, 12, 12][j] : 13); lebar.push(15, 15, 14, 10);
+    return { sel: sel, gabung: gabung, blok: blok, baris: r, kolom: 10 + maksK, lebar: lebar };
   }
   /** Urutan tab rekap = urutan tab di Database Pemesanan (+ tab arsip yang sudah hilang dari sheet). */
   function tabRekap(D, rows, S) {
@@ -1051,7 +1093,7 @@ var YX = (function () {
     var row = { Nama: nama, Bagian: bagian, Item: JSON.stringify(items), Catatan: str(d.Catatan), Diperbarui: tx.now() }, h;
     if (ada) h = tx.update('Paket_Kalkulasi', ada.ID_Paket, row); else h = tx.insert('Paket_Kalkulasi', row);
     tx.log(ada ? 'Ubah paket kalkulasi' : 'Tambah paket kalkulasi', 'Kalkulasi', h.ID_Paket, nama + ' · ' + items.length + ' item');
-    return ok(h, 'Paket "' + nama + '" tersimpan — dipakai otomatis untuk pesanan dengan nama trip yang sama.');
+    return ok(h, 'Paket "' + nama + '" tersimpan — disarankan otomatis di kalkulasi pesanan dengan nama trip yang sama.');
   };
   A['paket.hapus'] = function (tx, d) { var k = tx.get('Paket_Kalkulasi', d.id); if (!k) throw salah('Paket tidak ditemukan.'); tx.remove('Paket_Kalkulasi', d.id); tx.log('Hapus paket kalkulasi', 'Kalkulasi', d.id, k.Nama); return ok({ id: d.id }, 'Paket dihapus.'); };
 
@@ -1650,7 +1692,7 @@ var YX = (function () {
     var ukuran = num(d.ukuranBatch); if ([10, 20, 50].indexOf(ukuran) < 0) throw salah('Ukuran batch harus 10, 20, atau 50.');
     var jeda = str(d.jeda || '5'); if (!/^\d{1,3}(-\d{1,3})?$/.test(jeda)) throw salah('Format jeda: angka (5) atau rentang (3-8).');
     var S1 = tx.S(); if (!tx.H.waSiap(S1)) throw salah('WhatsApp belum terhubung — atur penyedia & kuncinya di Pengaturan → WhatsApp & Qontak.');
-    if (S1.WA_PENYEDIA === 'meta' || S1.WA_PENYEDIA === 'qontak') { var tb = templateWA(S1).BLAST; if (!tb || !(S1.WA_PENYEDIA === 'qontak' ? tb.id : tb.nama)) { if (S1.WA_CADANGAN !== 'YA') throw salah('WhatsApp Business API hanya bisa mengirim pesan template. Atur template "Blast" dulu di Pengaturan → WhatsApp & Qontak.'); } }
+    if (S1.WA_PENYEDIA === 'meta' || S1.WA_PENYEDIA === 'qontak') { var tb = templateWA(S1).BLAST; if (!tb || !(S1.WA_PENYEDIA === 'qontak' ? tb.id : tb.nama)) { if (S1.WA_CADANGAN !== 'YA' || !tx.H.waSiap(Object.assign({}, S1, { WA_PENYEDIA: 'fonnte' }))) throw salah('WhatsApp Business API hanya bisa mengirim pesan template. Atur template "Blast WhatsApp" dulu di Pengaturan → WhatsApp & Qontak' + (S1.WA_CADANGAN === 'YA' ? ' (cadangan Fonnte juga belum punya token).' : '.')); } }
     var seen = {}, list = [];
     var S0 = tx.S(), opt = {}; tx.all('CRM_Kontak').forEach(function (k) { if (k.OptOut === 'YA' || (/\bDEMO\b/i.test(k.Tag || '') && S0.NOTIF_KIRIM_DEMO !== 'YA')) opt[hp08(k.NoWA)] = 1; });
     (d.penerima || []).forEach(function (p) { var hp = hp08(p.hp); if (!hpValid(hp) || seen[hp] || opt[hp]) return; seen[hp] = 1; list.push({ hp: hp, nama: str(p.nama), vars: p.vars || {} }); });
@@ -1733,13 +1775,14 @@ var YX = (function () {
   function barisRekapSheet(r) { return { id: r.id, kode: r.kode, qty: r.inf.pax, pic: r.bagian === 'SB' ? (r.kapal || '') : str(r.p.PIC), price: r.inf.harga || (r.inf.pax ? Math.round(r.penjualan / r.inf.pax) : r.penjualan), kol: r.kol, status: r.status, mulai: r.inf.mulai }; }
   /** Data rekap satu periode, dikelompokkan per tab master data (urutan = urutan tab di Database Pemesanan). */
   function dataRekapSheet(D, S, today, bulan) {
-    var per = rentangPeriode(bulan, today), rows = rekapDaftar(D, { dari: per.dari, sampai: per.sampai, S: S, today: today }), tabs = [], idx = {};
+    var per = rentangPeriode(bulan, today), rows = rekapDaftar(D, { dari: per.dari, sampai: per.sampai, S: S, today: today }), tabs = [], idx = {}, L = labelRekap(S);
     tabRekap(D, rows, S).forEach(function (t) { idx[t.nama + '|' + t.bagian] = tabs.length; tabs.push({ nama: t.nama, bagian: t.bagian, rows: [], rk: [] }); });
     rows.forEach(function (r) {
       var n = str(r.p.Tab) || 'Lainnya', key = n + '|' + r.bagian;
       if (idx[key] === undefined) { idx[key] = tabs.length; tabs.push({ nama: n + (tabs.some(function (t) { return t.nama === n; }) ? ' (' + r.bagian + ')' : ''), bagian: r.bagian, rows: [], rk: [] }); }
       tabs[idx[key]].rows.push(barisRekapSheet(r)); tabs[idx[key]].rk.push(r);
     });
+    tabs.forEach(function (t) { t.kolom = kolomRekapBaris(L, t.bagian === 'SB' ? 'SB' : 'YB', t.rk); });   // kolom standar + kolom tambahan yang dipakai di tab itu
     return { bulan: bulan, label: per.label, tabs: tabs, n: rows.length };
   }
   function konteksTugas(tx, r) {
@@ -1996,7 +2039,7 @@ var YX = (function () {
     // Kalkulasi Indofarma = isi file KALKULASI_AGUNG (Kalkulasi CS) + MASKER GAS dari Dummy Kalkulasi Budget
     var CS_IND = [['BUS', 10000000, 'TIDAK'], ['JEEP BALURAN', 5000000, 'TIDAK'], ['TL', 1500000, 'YA', 'MAN POWER'], ['TIM DOKUMENTASI', 2500000, 'YA', 'MAN POWER'], ['AIR MINERAL', 500000, 'YA', 'KONSUMSI'], ['MAKAN DAY 1', 4000000, 'YA', 'KONSUMSI'], ['MAKAN DAY 2', 4000000, 'YA', 'KONSUMSI'], ['MAKAN DAY 3', 400000, 'YA', 'KONSUMSI'],
       ['PAKET PULAU', 5000000, 'TIDAK'], ['DJAWATAN', 500000, 'YA', 'KARCIS'], ['PAKET PULAU SB', 5000000, 'TIDAK'], ['PAKET GREEN ISLAND', 2000000, 'YA', 'KARCIS'], ['PULAU MERAH', 500000, 'YA', 'KARCIS'], ['BALURAN', 500000, 'YA', 'KARCIS'], ['GWD', 500000, 'YA', 'KARCIS'], ['IJEN', 500000, 'YA', 'KARCIS'], ['GUIDE IJEN', 500000, 'YA', 'MAN POWER'], ['SERVICE', 500000, 'YA', 'SERVICE']];
-    A['kalkulasi.simpan'](txA, { ID_Pesanan: IND.ID_Pesanan, Sumber: 'CS', Link_CS: LINK_KAL, Pax: 30, items: CS_IND.map(function (x) { return { Uraian: x[0], Tetap: x[1], Per_Pax: 0, Asal: 'CS' }; }).concat([{ Uraian: 'MASKER GAS', Tetap: 500000, Per_Pax: 0, Asal: 'Manual' }]) });
+    A['kalkulasi.simpan'](txA, { ID_Pesanan: IND.ID_Pesanan, Sumber: 'CS', Link_CS: LINK_KAL, Pax: 30, items: CS_IND.map(function (x) { return { Uraian: x[0], Tetap: x[1], Per_Pax: 0, Asal: 'CS', Kolom: x[0] === 'TIM DOKUMENTASI' ? 'X:DOKUMENTASI' : '' }; }).concat([{ Uraian: 'MASKER GAS', Tetap: 500000, Per_Pax: 0, Asal: 'Manual' }]) });
     // Budgeting TL Indofarma = isi file Dummy Kalkulasi Budget (judul grup + TERIMA TL)
     A['budgettl.simpan'](txA, { ID_Pesanan: IND.ID_Pesanan, Pax: 30, Asal: 'Manual', items: [{ uraian: 'MAN POWER', judul: true }, { uraian: 'TL', budget: 1500000 }, { uraian: 'TIM DOKUMENTASI', budget: 2500000 }, { uraian: 'GUIDE IJEN', budget: 500000 },
       { uraian: 'KONSUMSI', judul: true }, { uraian: 'AIR MINERAL', budget: 500000 }, { uraian: 'MAKAN DAY 1', budget: 4000000 }, { uraian: 'MAKAN DAY 2', budget: 4000000 }, { uraian: 'MAKAN DAY 3', budget: 400000 },
@@ -2094,7 +2137,7 @@ var YX = (function () {
     Tx: Tx, jalankan: jalankan, dataBoot: dataBoot, isiDemo: isiDemo, ok: ok, fail: fail, aksesMenu: aksesMenu,
     klaimTugas: klaimTugas, selesaikanTugas: selesaikanTugas, tugasTertunda: tugasTertunda, klaimNotif: klaimNotif, selesaikanNotif: selesaikanNotif, adaAntrian: adaAntrian, pengingatHarian: pengingatHarian,
     matriksNotif: matriksNotif, susunKolom: susunKolom, normalHeader: normalHeader, kunciKanonik: kunciKanonik,
-    hitung: { indeks: indeks, infoTab: infoTab, infoPesanan: infoPesanan, statusTrip: statusTrip, durasi: durasi, ringkasKalkulasi: ringkasKalkulasi, saranItem: saranItem, tebakKolom: tebakKolom, tebakGrup: tebakGrup, kolomValid: kolomValid,
+    hitung: { indeks: indeks, infoTab: infoTab, infoPesanan: infoPesanan, statusTrip: statusTrip, durasi: durasi, ringkasKalkulasi: ringkasKalkulasi, saranItem: saranItem, tebakKolom: tebakKolom, tebakGrup: tebakGrup, kolomValid: kolomValid, kolomKustom: kolomKustom, namaKolomKustom: namaKolomKustom, labelKolom: labelKolom, kolomDenganKustom: kolomDenganKustom, kolomRekapBaris: kolomRekapBaris, kolomKustomDipakai: kolomKustomDipakai,
       labelRekap: labelRekap, rekapPesanan: rekapPesanan, rekapDaftar: rekapDaftar, totalRekap: totalRekap, rentangPeriode: rentangPeriode, geserBulan: geserBulan, labaRugi: labaRugi,
       tagihanPesanan: tagihanPesanan, tagihanDaftar: tagihanDaftar, dataInvoice: dataInvoice, saranInvoice: saranInvoice, hitungInvoice: hitungInvoice, rekeningDari: rekeningDari, syaratDari: syaratDari,
       budgetTL: budgetTL, saranBudgetTL: saranBudgetTL, tabRekap: tabRekap, varsEvent: varsEvent, payloadQontak: payloadQontak, sumberKontak: sumberKontak,

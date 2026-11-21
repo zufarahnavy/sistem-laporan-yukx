@@ -24,7 +24,7 @@
     br('<b>Penjualan trip</b> <span class="muted">' + T.trip + ' trip terkunci · ' + T.pax + ' pax</span>', '<b>' + U.rp(T.penjualan) + '</b>', 'lr-grup');
     ['YB', 'SB'].forEach(function (g) { var pb = lr.perBagian[g]; if (pb.n) br(esc(L[g].L.JUDUL) + ' <span class="muted">(' + pb.n + ' trip)</span>', U.rp(pb.penjualan), '', true); });
     br('<b>Pengeluaran trip (HPP)</b>', '<b>(' + U.rp(T.pengeluaran) + ')</b>', 'lr-grup');
-    ['YB', 'SB'].forEach(function (g) { L[g].kolom.forEach(function (k) { var v = lr.hpp[g][k.k]; if (v) br(esc(L[g].L.JUDUL) + ' · ' + esc(k.l), U.rp(v), '', true); }); });
+    ['YB', 'SB'].forEach(function (g) { HT.kolomDenganKustom(L, g, Object.keys(lr.hpp[g] || {})).forEach(function (k) { var v = lr.hpp[g][k.k]; if (v) br(esc(L[g].L.JUDUL) + ' · ' + esc(k.l), U.rp(v), '', true); }); });
     br('<b>Laba kotor</b> <span class="muted">margin ' + persen(T.marginKotor) + '</span>', '<b>' + U.rp(T.labaKotor) + '</b>', 'lr-total');
     br('<b>Biaya operasional perusahaan</b>', '<b>(' + U.rp(T.operasional) + ')</b>', 'lr-grup');
     Object.keys(lr.opsKat).sort().forEach(function (k) { br(esc(k), U.rp(lr.opsKat[k]), '', true); });

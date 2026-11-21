@@ -22,7 +22,7 @@
   function u(v) { return v ? U.ribuan(v) : ''; }
 
   function tabelBagian(tb, L) {
-    var b = tb.bagian === 'SB' ? 'SB' : 'YB', rows = tb.rk, lb = L[b].L, kol = L[b].kolom, adaHpp = !!String(lb.HPP || '').trim();
+    var b = tb.bagian === 'SB' ? 'SB' : 'YB', rows = tb.rk, lb = L[b].L, kol = tb.kolom && tb.kolom.length ? tb.kolom : L[b].kolom, adaHpp = !!String(lb.HPP || '').trim();
     if (!rows.length) return '<section class="card rk-bagian rk-bagian--kosong"><div class="rk-bagian__h"><h2>' + esc(String(tb.nama).toUpperCase()) + '</h2><span class="muted">Belum ada trip di bulan ini · kolom ' + (b === 'SB' ? 'Sunrise Boat' : 'YukBanyuwangi') + '</span></div></section>';
     var h1 = '<tr><th rowspan="2" class="num">' + esc(lb.NO) + '</th><th rowspan="2" class="rk__kode">' + esc(lb.KODE) + '</th><th rowspan="2" class="num">' + esc(lb.QTY) + '</th><th rowspan="2">' + esc(lb.PIC) + '</th><th rowspan="2" class="num">' + esc(lb.PRICE) + '</th><th rowspan="2" class="num rk__jual">' + esc(lb.PENJUALAN) + '</th>' +
       (adaHpp ? '<th colspan="' + kol.length + '" class="center rk__hpp">' + esc(lb.HPP) + '</th>' : kol.map(function (k) { return '<th rowspan="2" class="num">' + esc(k.l) + '</th>'; }).join('')) +
@@ -53,7 +53,7 @@
   function mulaiEdit(id) { var r = HT.rekapPesanan(Store.D, HT.indeks(Store.D), Store.get('Pesanan', id) || {}, Store.S, U.hariIni()), row = Store.get('Rekap', id) || {}; st.ed = { id: id, tambahan: (r.tambahan || []).map(function (t) { return Object.assign({}, t); }), kode: r.kode, kapal: row.Kapal || '', catatan: row.Catatan || '', kotor: false }; }
   function isiEditor(id) {
     var r = rkDraft(id); if (!r) return UI.kosong('search', 'Data rekap tidak ditemukan');
-    var L = HT.labelRekap(Store.S)[r.bagian], kol = L.kolom, adm = Store.isAdmin(), fin = Store.isFin(), kunci = r.kunci, ro = kunci || !adm, ed = st.ed;
+    var LA = HT.labelRekap(Store.S), L = LA[r.bagian], kol = L.kolom, kolRinci = HT.kolomDenganKustom(LA, r.bagian, Object.keys(r.kol || {})), adm = Store.isAdmin(), fin = Store.isFin(), kunci = r.kunci, ro = kunci || !adm, ed = st.ed;
     var riw = (U.parseJson(r.row && r.row.Riwayat, []) || []).slice().reverse();
     var JENIS = YX.JENIS_TAMBAHAN, saranKol = r.bagian === 'SB' ? 'LAIN' : 'KONSUM';
     return '<div class="card card--tight"><div class="mini-kpi"><div><span class="label">Penjualan</span><b class="num">' + U.rp(r.penjualan) + '</b></div><div><span class="label">Pengeluaran</span><b class="num">' + U.rp(r.pengeluaran) + '</b></div><div><span class="label">Laba kotor</span><b class="num ' + (r.rugi ? 'danger' : 'ok') + '">' + U.rp(r.laba) + '</b></div><div><span class="label">Margin</span><b class="num">' + persen(r.margin) + '</b></div></div>' +
@@ -62,10 +62,10 @@
       '<div class="field field--full"><label for="rk-kode">' + esc(L.L.KODE) + '</label><input class="input" id="rk-kode" data-e="kode" value="' + esc(ro ? r.kode : ed.kode) + '"' + (ro ? ' disabled' : '') + '></div>' +
       (r.bagian === 'SB' ? '<div class="field field--full"><label for="rk-kapal">' + esc(L.L.PIC) + ' (kapal)</label><input class="input" id="rk-kapal" data-e="kapal" value="' + esc(ro ? r.kapal : ed.kapal) + '"' + (ro ? ' disabled' : '') + ' placeholder="Nama kapal"></div>' : '') + '</div></div>' +
       '<div class="card card--tight"><b style="display:block;margin-bottom:8px">Rincian per kolom</b><table class="rk-rinci"><thead><tr><th>Kolom</th><th class="num">Kalkulasi</th><th class="num">Tambahan</th><th class="num">Total</th></tr></thead><tbody>' +
-      kol.map(function (k) { var a = r.asal ? r.asal[k.k] : null, tot = r.kol[k.k] || 0; if (!tot && !(a && (a.kalkulasi || a.tambahan))) return ''; return '<tr><td>' + esc(k.l) + '</td><td class="num">' + (a ? u(a.kalkulasi) : '—') + '</td><td class="num">' + (a ? u(a.tambahan) : '—') + '</td><td class="num"><b>' + U.ribuan(tot) + '</b></td></tr>'; }).join('') + '</tbody></table></div>' +
+      kolRinci.map(function (k) { var a = r.asal ? r.asal[k.k] : null, tot = r.kol[k.k] || 0; if (!tot && !(a && (a.kalkulasi || a.tambahan))) return ''; return '<tr><td>' + esc(k.l) + '</td><td class="num">' + (a ? u(a.kalkulasi) : '—') + '</td><td class="num">' + (a ? u(a.tambahan) : '—') + '</td><td class="num"><b>' + U.ribuan(tot) + '</b></td></tr>'; }).join('') + '</tbody></table></div>' +
       '<div class="card card--tight"><div class="between" style="margin-bottom:6px"><b>Pengeluaran tambahan</b>' + (ed && ed.kotor ? '<span class="badge warn">Belum disimpan</span>' : '') + '</div><p class="help muted" style="margin-bottom:10px">Over budget setelah trip (masukkan ke kolom ' + esc(kol.find(function (k) { return k.k === saranKol; }).l) + ' atau ' + esc(kol.find(function (k) { return k.k === (r.bagian === 'SB' ? 'LAIN' : 'LL'); }).l) + ') dan pengeluaran yang dieksekusi Admin langsung — kendaraan, penginapan, paket pulau.</p>' +
       '<div class="stack" id="rk-tamb" style="gap:8px">' + (ro ? (r.tambahan || []) : ed.tambahan).map(function (t, i) {
-        return '<div class="tamb" data-i="' + i + '"><select class="select" data-t="jenis"' + (ro ? ' disabled' : '') + '>' + JENIS.map(function (j) { return '<option' + (t.jenis === j ? ' selected' : '') + '>' + j + '</option>'; }).join('') + '</select><select class="select" data-t="kolom"' + (ro ? ' disabled' : '') + '>' + kol.map(function (k) { return '<option value="' + k.k + '"' + (t.kolom === k.k ? ' selected' : '') + '>' + esc(k.l) + '</option>'; }).join('') + '</select>' +
+        return '<div class="tamb" data-i="' + i + '"><select class="select" data-t="jenis"' + (ro ? ' disabled' : '') + '>' + JENIS.map(function (j) { return '<option' + (t.jenis === j ? ' selected' : '') + '>' + j + '</option>'; }).join('') + '</select><select class="select" data-t="kolom"' + (ro ? ' disabled' : '') + '>' + Hal.opsiKolom(r.bagian, HT.kolomValid(r.bagian, t.kolom) || (r.bagian === 'SB' ? 'LAIN' : 'LL'), (ro ? r.tambahan : ed.tambahan).map(function (x) { return x.kolom; })) + '</select>' +
           '<input class="input" data-t="uraian" value="' + esc(t.uraian) + '" placeholder="Uraian, mis. Tambahan makan malam"' + (ro ? ' disabled' : '') + '><input class="input num" data-t="nominal" inputmode="numeric" value="' + (t.nominal ? Number(t.nominal).toLocaleString('id-ID') : '') + '" placeholder="Nominal"' + (ro ? ' disabled' : '') + '>' + (ro ? '' : '<button class="icon-btn" data-x="tHapus" data-i="' + i + '" aria-label="Hapus">' + ic('x', 18) + '</button>') + '</div>';
       }).join('') + (!(ro ? r.tambahan : ed.tambahan).length ? '<p class="muted">Belum ada tambahan.</p>' : '') + '</div>' +
       (ro ? '' : '<div class="row wrap" style="gap:6px;margin-top:10px"><button class="btn btn--soft btn--sm" data-x="tTambah" data-j="Over budget" data-k="' + saranKol + '">' + ic('plus', 16) + 'Over budget</button><button class="btn btn--soft btn--sm" data-x="tTambah" data-j="Non-manifest" data-k="' + (r.bagian === 'SB' ? 'LAIN' : 'KEND') + '">' + ic('plus', 16) + 'Non-manifest</button><button class="btn btn--ghost btn--sm" data-x="tTambah" data-j="Lainnya" data-k="' + (r.bagian === 'SB' ? 'LAIN' : 'LL') + '">' + ic('plus', 16) + 'Lainnya</button></div>') + '</div>' +
@@ -91,9 +91,14 @@
     h.el.addEventListener('input', function (e) {
       var t = e.target; if (!st.ed) return;
       if (t.dataset.e) { st.ed[t.dataset.e] = t.value; st.ed.kotor = true; return; }
-      if (t.dataset.t) { var it = st.ed.tambahan[+t.closest('.tamb').dataset.i]; if (t.dataset.t === 'nominal') { var v = t.value.replace(/\D/g, ''); t.value = v ? Number(v).toLocaleString('id-ID') : ''; it.nominal = Number(v) || 0; } else it[t.dataset.t] = t.value; st.ed.kotor = true; segar(false); }
+      if (t.dataset.t && t.tagName !== 'SELECT') { var it = st.ed.tambahan[+t.closest('.tamb').dataset.i]; if (t.dataset.t === 'nominal') { var v = t.value.replace(/\D/g, ''); t.value = v ? Number(v).toLocaleString('id-ID') : ''; it.nominal = Number(v) || 0; } else it[t.dataset.t] = t.value; st.ed.kotor = true; segar(false); }
     });
-    h.el.addEventListener('change', function (e) { var t = e.target; if (t.tagName === 'SELECT' && t.dataset.t && st.ed) { st.ed.tambahan[+t.closest('.tamb').dataset.i][t.dataset.t] = t.value; st.ed.kotor = true; segar(false); } });
+    h.el.addEventListener('change', async function (e) {
+      var t = e.target; if (t.tagName !== 'SELECT' || !t.dataset.t || !st.ed) return;
+      var it = st.ed.tambahan[+t.closest('.tamb').dataset.i];
+      if (t.dataset.t === 'kolom' && t.value === '__lain') { var k = await Hal.tanyaKolomLain(r.bagian); if (!k) { t.value = HT.kolomValid(r.bagian, it.kolom) || (r.bagian === 'SB' ? 'LAIN' : 'LL'); return; } it.kolom = k; st.ed.kotor = true; segar(true); return; }
+      it[t.dataset.t] = t.value; st.ed.kotor = true; segar(false);
+    });
     h.el.addEventListener('click', async function (e) {
       var b = e.target.closest('[data-x]'); if (!b) return; var x = b.dataset.x;
       if (x === 'tTambah') { st.ed.tambahan.push({ jenis: b.dataset.j, kolom: b.dataset.k, uraian: '', nominal: 0 }); st.ed.kotor = true; segar(true); var u2 = h.el.querySelectorAll('[data-t="uraian"]'); if (u2.length) u2[u2.length - 1].focus(); }

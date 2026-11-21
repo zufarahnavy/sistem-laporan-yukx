@@ -159,6 +159,8 @@
         res = await apiOnce(action, data, opt.timeout || (baca ? (i ? 40000 : 25000) : 90000), reqId);
         if (res.success || !res.retryable) break;
       }
+      if (res && res.v && res.v !== Store.serverV) { Store.serverV = res.v; if (window.App && App.cekVersi) App.cekVersi(); }
+      if (res && !res.success && res.data && res.data.code === 'UNKNOWN') res.message = 'Server Apps Script belum versi terbaru' + (res.v ? ' (server v' + res.v + ', aplikasi v' + YX.VERSI + ')' : '') + ' — "' + action + '" belum dikenal server. Admin: ganti berkas backend, lalu Terapkan → Kelola deployment → Edit → Versi baru → Terapkan.';
       if (!res.success && res.data && res.data.code === 'AUTH') { App.sesiBerakhir(); }
       return res;
     } finally { if (garis) garis(); }

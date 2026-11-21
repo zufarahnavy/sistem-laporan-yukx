@@ -884,7 +884,9 @@ table.rk tfoot td{position:sticky;bottom:0;background:var(--c-primary-tint);font
 .rk-rinci{width:100%;min-width:0;font-size:13px}
 .rk-rinci th{padding:6px 4px;font-size:10.5px}
 .rk-rinci td{padding:6px 4px}
-.tamb{display:grid;grid-template-columns:132px 132px minmax(0,1fr) 120px 36px;gap:6px;align-items:center}
+.tamb{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr) minmax(110px,.8fr) 36px;grid-template-areas:"j k k x" "u u n n";gap:6px;align-items:center;padding:8px;border-radius:var(--r-sm);background:var(--c-surface-2)}
+.tamb [data-t="jenis"]{grid-area:j}.tamb [data-t="kolom"]{grid-area:k}.tamb [data-t="uraian"]{grid-area:u}.tamb [data-t="nominal"]{grid-area:n}.tamb [data-x="tHapus"]{grid-area:x}
+.tamb:has([disabled]){grid-template-areas:"j k k k" "u u n n"}
 .tamb .input,.tamb .select{min-height:38px;font-size:13px}
 .lr-tabel{width:100%;min-width:0}
 .lr-tabel td{padding:10px 4px;border-bottom:1px solid var(--c-border)}
@@ -985,8 +987,7 @@ table.rk tfoot td{position:sticky;bottom:0;background:var(--c-primary-tint);font
   .inv-item__r{grid-template-columns:minmax(0,1fr) 64px;grid-auto-rows:auto}
   .inv-item__r [data-it="desk"]{grid-column:1 / -1}
   .inv-item__r .inv-item__t{grid-column:1}
-  .tamb{grid-template-columns:1fr 1fr}
-  .tamb [data-t="uraian"]{grid-column:1 / -1}
+
   .rek-baris{grid-template-columns:40px minmax(0,1fr) 40px}
   .rek-baris [data-r="norek"]{grid-column:2}
   .rek-baris .btn{grid-column:2}
@@ -1275,3 +1276,34 @@ html.kunci-gulir,html.kunci-gulir body{overflow:hidden}
 .field > label.switch,.field > label.check{justify-content:flex-start;font-weight:600}
 .penampil > *{min-width:0}
 @media (max-width:720px){ .rh-baris{flex-wrap:wrap} .rh-baris .input{flex:1 1 100%} }
+.chip--mini{min-height:22px;padding:0 9px;font-size:11.5px;font-weight:700;cursor:default;background:var(--c-surface-2);color:var(--c-text)}
+.versi-banner{display:flex;align-items:center;gap:8px;justify-content:center;padding:8px max(16px,env(safe-area-inset-left,0px));background:var(--c-danger-tint,#FDECEC);color:var(--c-danger,#B42318);font-size:13px;font-weight:600;line-height:1.45;text-align:left;border-bottom:1px solid color-mix(in srgb,var(--c-danger,#B42318) 25%,transparent)}
+.versi-banner[hidden]{display:none}
+.versi-banner span{max-width:110ch}
+/* v2.1.1 — susunan HP: item kalkulasi, tambahan rekap, rincian kolom */
+@media (max-width:720px){
+  .ki,.ki-daftar--tanpa .ki{grid-template-columns:minmax(0,1fr) minmax(0,1fr) 44px}
+  .ki .ki__uraian,.ki-daftar--tanpa .ki .ki__uraian{grid-column:1 / 3;grid-row:1}
+  .ki .ki__hapus{grid-column:3;grid-row:1}
+  .ki .ki__uang,.ki-daftar--tanpa .ki .ki__uang{grid-row:2;grid-column:auto}
+  .ki .ki__budget{grid-row:3;grid-column:1}
+  .ki .ki__kol{grid-row:3;grid-column:2 / 4}
+  .ki-daftar--tanpa .ki .ki__kol{grid-row:3;grid-column:1 / 4}
+  .tamb{grid-template-columns:minmax(0,1fr) minmax(0,1fr) 36px;grid-template-areas:"j k x" "u u u" "n n ."}
+  .tamb:has([disabled]){grid-template-areas:"j k k" "u u u" "n n ."}
+  table.rk-rinci tbody td,table.rk-rinci thead th{padding:6px 4px}
+  table.rk-rinci{font-size:12.5px}
+}
+/* Budgeting TL: susunan bertumpuk bila kartu editor sempit (laptop 1280 px, tablet, HP) */
+.bt-wadah{container-type:inline-size}
+@container (max-width:640px){
+  .bt-kepala{display:none}
+  .bt{grid-template-columns:minmax(0,1fr) minmax(0,1fr) 44px;padding:10px}
+  .bt__ket{grid-column:1 / 3;grid-row:1}
+  .bt__hapus{grid-column:3;grid-row:1}
+  .bt__urut{grid-column:3;grid-row:2;flex-direction:column;align-self:end}
+  .bt__urut .icon-btn{width:44px;height:30px}
+  .bt__l{display:block;font-size:10.5px;font-weight:700;color:var(--c-text-muted);margin-bottom:3px;letter-spacing:.03em}
+  .bt--judul{grid-template-columns:minmax(0,1fr) minmax(0,1fr) 44px}
+  .bt--judul .bt__tanda{grid-column:1 / 3;grid-row:2}
+}
